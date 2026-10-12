@@ -10,9 +10,28 @@ android {
     defaultConfig {
         applicationId = "com.qpm.mirror"
         minSdk = 24
-        targetSdk = 33
+        targetSdk = 34
         versionCode = 1
         versionName = "0.1"
+    }
+
+    signingConfigs {
+        // 侧载场景下复用 debug 密钥签名 release，使 CI 的 assembleRelease 可产出可用 APK。
+        // 正式发布前请替换为正式密钥（storeFile/storePassword/keyAlias/keyPassword）。
+        create("release") {
+            val d = signingConfigs.getByName("debug")
+            storeFile = d.storeFile
+            storePassword = d.storePassword
+            keyAlias = d.keyAlias
+            keyPassword = d.keyPassword
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {

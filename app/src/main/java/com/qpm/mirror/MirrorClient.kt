@@ -16,6 +16,7 @@ class MirrorClient(
 ) {
     @Volatile private var socket: Socket? = null
     @Volatile private var out: OutputStream? = null
+    private var listener: Discovery.Listener? = null
 
     @Volatile private var phoneScreenW = 0
     @Volatile private var phoneScreenH = 0
@@ -28,7 +29,8 @@ class MirrorClient(
         Thread {
             try {
                 onStatus("正在搜索发送端…")
-                val device = Discovery.awaitDevice()
+                listener = Discovery.Listener()
+                val device = listener?.listen() ?: return@Thread
                 onStatus("连接 ${device.host}:${device.port}")
                 connectTo(device.host, device.port)
             } catch (e: Exception) {
@@ -83,6 +85,8 @@ class MirrorClient(
     }
 
     fun stop() {
+        listener?.stop()
+        listener = null
         runCatching { socket?.close() }
     }
 }

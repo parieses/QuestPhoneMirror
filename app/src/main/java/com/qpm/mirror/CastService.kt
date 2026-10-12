@@ -43,6 +43,7 @@ class CastService : Service() {
     private var display: VirtualDisplay? = null
     private var encoder: H264Encoder? = null
     private var server: ServerSocket? = null
+    private var broadcastThread: Thread? = null
     private var running = false
 
     override fun onCreate() {
@@ -102,7 +103,7 @@ class CastService : Service() {
         )
 
         Thread { acceptLoop() }.start()
-        Thread { Discovery.broadcastLoop(TCP_PORT, width, height) }.start()
+        broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, width, height) }.apply { start() }
     }
 
     private fun acceptLoop() {
@@ -130,6 +131,8 @@ class CastService : Service() {
         running = false
         clients.forEach { it.close() }
         clients.clear()
+        broadcastThread?.interrupt()
+        broadcastThread = null
         runCatching { server?.close() }
         runCatching { display?.release() }
         runCatching { projection?.stop() }
@@ -170,7 +173,9 @@ class CastService : Service() {
             try {
                 val out = socket.getOutputStream()
                 while (!closed) {
-                    out.write(queue.take())
+                    // 用 poll 而非 take：close() 后若队列已空，take() 会永久挂起导致线程泄漏
+                    val frame = queue.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                    out.write(frame)
                 }
             } catch (_: Exception) {
                 close()

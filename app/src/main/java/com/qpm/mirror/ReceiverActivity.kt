@@ -1,6 +1,7 @@
 package com.qpm.mirror
 
 import android.os.Bundle
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -37,10 +38,12 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         btnConnect.setOnClickListener {
             val ip = edtIp.text.toString().trim()
             if (ip.isNotEmpty()) {
+                // 先彻底停掉旧的（含 UDP 发现监听），再建新连接，避免两个客户端同时喂同一个解码器
                 client?.stop()
+                client = null
                 client = MirrorClient(
                     decoder!!,
-                    onScreenInfo = { _, _, _ -> },
+                    onScreenInfo = { w, h, _ -> runOnUiThread { fitSurface(w, h) } },
                     onStatus = { s -> runOnUiThread { hint.text = s } },
                     onDisconnected = { runOnUiThread { hint.text = "已断开，返回重进重连" } }
                 ).also { it.connect(ip) }
@@ -64,7 +67,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         client = MirrorClient(
             decoder!!,
-            onScreenInfo = { _, _, _ -> },
+            onScreenInfo = { w, h, _ -> runOnUiThread { fitSurface(w, h) } },
             onStatus = { s -> runOnUiThread { hint.text = s } },
             onDisconnected = { runOnUiThread { hint.text = "已断开，返回重进重连" } }
         ).also { it.start() }
@@ -77,9 +80,10 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val vh = root.height.toFloat()
         if (vw <= 0 || vh <= 0) return
         val scale = minOf(vw / videoW, vh / videoH)
-        val lp = surfaceView.layoutParams
+        val lp = surfaceView.layoutParams as FrameLayout.LayoutParams
         lp.width = (videoW * scale).toInt()
         lp.height = (videoH * scale).toInt()
+        lp.gravity = Gravity.CENTER
         surfaceView.layoutParams = lp
     }
 

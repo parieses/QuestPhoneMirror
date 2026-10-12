@@ -7,7 +7,7 @@
 
 - 免 PC、免公网、免账号、免 root——两端同一 Wi-Fi 即用
 - 手机端 `MediaProjection` 录屏 → H.264 硬编 → TCP 推流
-- 头显端 UDP 广播自动发现 → `MediaCodec` 硬解 → SurfaceView 渲染
+- 头显端监听手机 UDP 广播自动发现 → `MediaCodec` 硬解 → SurfaceView 渲染
 - 控制走 `AccessibilityService.dispatchGesture`，全机型可用
 - 深色 UI + 自适应启动图标，单 APK 覆盖两端
 
