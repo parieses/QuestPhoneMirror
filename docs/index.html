@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QPM 手机镜像 — Quest 头显 × 安卓手机互投屏</title>
+<meta name="description" content="一个 APK 双角色：手机装上是发送端，Quest 装上是接收端。手机画面实时镜像进头显，并能反向操作手机。免 PC、免公网、免 root。">
+<style>
+  :root {
+    --brand: #4F46E5;
+    --violet: #7C3AED;
+    --cyan: #22D3EE;
+    --bg: #0B0A1F;
+    --bg-2: #14112E;
+    --card: #1A1836;
+    --stroke: #37346B;
+    --text: #F1F5F9;
+    --dim: #A5B4FC;
+    --dimmer: #64748B;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- 背景光斑 ---------- */
+  .glow {
+    position: fixed; border-radius: 50%; filter: blur(120px); opacity: .35; pointer-events: none; z-index: 0;
+  }
+  .glow.a { width: 480px; height: 480px; background: var(--brand); top: -160px; left: -120px; }
+  .glow.b { width: 420px; height: 420px; background: var(--violet); top: 30%; right: -160px; }
+  .glow.c { width: 380px; height: 380px; background: var(--cyan); bottom: -140px; left: 30%; opacity: .18; }
+
+  /* ---------- 导航 ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    background: rgba(11, 10, 31, .75);
+    border-bottom: 1px solid var(--stroke);
+  }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; }
+  .brand svg { display: block; }
+  .nav-links { display: flex; gap: 26px; font-size: 14px; color: var(--dim); }
+  .nav-links a:hover { color: var(--cyan); }
+  .gh-btn {
+    display: flex; align-items: center; gap: 8px;
+    border: 1px solid var(--stroke); border-radius: 999px;
+    padding: 7px 16px; font-size: 13.5px; color: var(--text);
+    transition: border-color .2s, background .2s;
+  }
+  .gh-btn:hover { border-color: var(--cyan); background: rgba(34, 211, 238, .08); }
+  @media (max-width: 720px) { .nav-links { display: none; } }
+
+  /* ---------- Hero ---------- */
+  header { position: relative; z-index: 1; padding: 88px 0 72px; }
+  .hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: 48px; align-items: center; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--stroke); border-radius: 999px;
+    padding: 6px 14px; font-size: 13px; color: var(--cyan);
+    background: rgba(34, 211, 238, .06); margin-bottom: 22px;
+  }
+  .tag .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+  h1 { font-size: clamp(34px, 5vw, 52px); line-height: 1.25; font-weight: 800; letter-spacing: .5px; }
+  h1 .grad {
+    background: linear-gradient(100deg, #22D3EE, #818CF8 55%, #C084FC);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub { margin-top: 18px; font-size: 16.5px; color: var(--dim); max-width: 30em; }
+  .cta { display: flex; gap: 14px; margin-top: 32px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px;
+    border-radius: 14px; padding: 13px 26px; font-size: 15px; font-weight: 600;
+    transition: transform .15s, box-shadow .2s; cursor: pointer; border: none;
+  }
+  .btn-primary {
+    color: #fff;
+    background: linear-gradient(100deg, var(--brand), var(--violet));
+    box-shadow: 0 8px 28px rgba(79, 70, 229, .45);
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 34px rgba(124, 58, 237, .5); }
+  .btn-ghost { border: 1px solid var(--stroke); color: var(--text); background: rgba(26, 24, 54, .6); }
+  .btn-ghost:hover { border-color: var(--cyan); }
+  .meta { margin-top: 22px; font-size: 13px; color: var(--dimmer); display: flex; gap: 18px; flex-wrap: wrap; }
+  .meta b { color: var(--dim); font-weight: 600; }
+
+  /* Hero 插画 */
+  .hero-art { display: flex; justify-content: center; }
+  .art-card {
+    width: 100%; max-width: 380px; border-radius: 28px;
+    background: linear-gradient(160deg, rgba(49, 46, 129, .55), rgba(26, 24, 54, .9));
+    border: 1px solid var(--stroke);
+    padding: 34px 28px 30px; position: relative; overflow: hidden;
+  }
+  .art-card::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(420px 200px at 70% 0%, rgba(34, 211, 238, .16), transparent 70%);
+  }
+  .art-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; position: relative; }
+  .art-label { text-align: center; font-size: 12.5px; color: var(--dim); margin-top: 12px; }
+  .art-label b { display: block; color: var(--text); font-size: 14px; }
+  .wave-track { flex: 1; height: 46px; position: relative; }
+  .wave {
+    position: absolute; top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%);
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    animation: flow 1.6s linear infinite;
+  }
+  .wave.w2 { animation-delay: .25s; top: 38%; opacity: .55; }
+  .wave.w3 { animation-delay: .5s; top: 62%; opacity: .35; }
+  @keyframes flow { 0% { background-position: -200px 0; } 100% { background-position: 200px 0; } }
+  .pulse-ring {
+    position: absolute; top: 50%; left: 0; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 16px var(--cyan);
+    animation: travel 1.6s linear infinite;
+  }
+  @keyframes travel { 0% { left: 2%; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { left: 92%; opacity: 0; } }
+  .art-foot {
+    margin-top: 22px; padding-top: 16px; border-top: 1px dashed var(--stroke);
+    font-size: 12px; color: var(--dimmer); text-align: center; position: relative;
+  }
+
+  /* ---------- 通用 section ---------- */
+  section { position: relative; z-index: 1; padding: 64px 0; }
+  .sec-head { text-align: center; margin-bottom: 44px; }
+  .sec-head .kicker { font-size: 13px; letter-spacing: 2.5px; color: var(--cyan); text-transform: uppercase; font-weight: 700; }
+  .sec-head h2 { font-size: clamp(24px, 3.4vw, 34px); font-weight: 800; margin-top: 8px; }
+  .sec-head p { color: var(--dim); margin-top: 10px; font-size: 15px; }
+
+  /* ---------- 功能卡 ---------- */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } .hero { grid-template-columns: 1fr; } }
+  .feat {
+    background: var(--card); border: 1px solid var(--stroke); border-radius: 20px;
+    padding: 24px 22px; transition: transform .2s, border-color .2s;
+  }
+  .feat:hover { transform: translateY(-4px); border-color: rgba(34, 211, 238, .55); }
+  .feat .ic {
+    width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; margin-bottom: 14px;
+    background: linear-gradient(140deg, rgba(79, 70, 229, .35), rgba(124, 58, 237, .25));
+    border: 1px solid var(--stroke);
+  }
+  .feat h3 { font-size: 16.5px; font-weight: 700; }
+  .feat p { font-size: 13.5px; color: var(--dim); margin-top: 7px; }
+
+  /* ---------- 原理图 ---------- */
+  .flow {
+    background: var(--card); border: 1px solid var(--stroke); border-radius: 24px;
+    padding: 34px 26px; overflow-x: auto;
+  }
+  .flow svg { display: block; margin: 0 auto; min-width: 640px; width: 100%; max-width: 860px; }
+  .flow-note { text-align: center; font-size: 13px; color: var(--dimmer); margin-top: 16px; }
+
+  /* ---------- 步骤 ---------- */
+  .steps { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 720px) { .steps { grid-template-columns: 1fr; } }
+  .step-card { background: var(--card); border: 1px solid var(--stroke); border-radius: 20px; padding: 26px 24px; }
+  .step-card .role {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700;
+    color: var(--cyan); border: 1px solid rgba(34, 211, 238, .4); border-radius: 999px; padding: 4px 12px; margin-bottom: 14px;
+  }
+  .step-card .role.violet { color: #C4B5FD; border-color: rgba(196, 181, 253, .4); }
+  .step-card h3 { font-size: 19px; font-weight: 800; }
+  .step-card ol { list-style: none; counter-reset: s; margin-top: 16px; }
+  .step-card ol li {
+    counter-increment: s; position: relative; padding-left: 38px; margin-bottom: 14px;
+    font-size: 14px; color: var(--dim);
+  }
+  .step-card ol li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 25px; height: 25px; border-radius: 9px; display: grid; place-items: center;
+    background: linear-gradient(140deg, var(--brand), var(--violet));
+    color: #fff; font-size: 13px; font-weight: 700;
+  }
+  .step-card ol li b { color: var(--text); font-weight: 600; }
+  .tip {
+    margin-top: 6px; border-radius: 14px; padding: 12px 14px; font-size: 12.5px;
+    background: rgba(34, 211, 238, .07); border: 1px solid rgba(34, 211, 238, .3); color: #A5F3FC;
+  }
+
+  /* ---------- FAQ ---------- */
+  details {
+    background: var(--card); border: 1px solid var(--stroke); border-radius: 16px;
+    padding: 16px 20px; margin-bottom: 12px;
+  }
+  details[open] { border-color: rgba(34, 211, 238, .45); }
+  summary { cursor: pointer; font-weight: 600; font-size: 15px; list-style: none; display: flex; align-items: center; gap: 10px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: "Q"; color: var(--cyan); font-weight: 800; }
+  details p { margin-top: 10px; font-size: 14px; color: var(--dim); padding-left: 22px; }
+  details code { background: rgba(34, 211, 238, .12); color: #A5F3FC; border-radius: 6px; padding: 1px 7px; font-size: 12.5px; }
+
+  /* ---------- 限制 ---------- */
+  .limits { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .limits span {
+    border: 1px solid var(--stroke); border-radius: 999px; padding: 8px 18px;
+    font-size: 13.5px; color: var(--dim); background: var(--card);
+  }
+
+  /* ---------- 底部 CTA + footer ---------- */
+  .final {
+    text-align: center; background: linear-gradient(160deg, rgba(49, 46, 129, .5), rgba(26, 24, 54, .6));
+    border: 1px solid var(--stroke); border-radius: 28px; padding: 52px 28px; margin-bottom: 20px;
+  }
+  .final h2 { font-size: clamp(22px, 3vw, 30px); font-weight: 800; }
+  .final p { color: var(--dim); margin: 12px 0 26px; font-size: 15px; }
+  footer { border-top: 1px solid var(--stroke); padding: 30px 0 40px; color: var(--dimmer); font-size: 13px; }
+  footer .wrap { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  footer a:hover { color: var(--cyan); }
+</style>
+</head>
+<body>
+
+<div class="glow a"></div>
+<div class="glow b"></div>
+<div class="glow c"></div>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+        <rect x="6.5" y="2.5" width="11" height="19" rx="2.5" stroke="#22D3EE" stroke-width="1.6"/>
+        <path d="M12 20.2v.01" stroke="#22D3EE" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M9.5 5.2a2.6 2.6 0 0 1 5 0" stroke="#22D3EE" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M7.5 3a4.6 4.6 0 0 1 9 0" stroke="#22D3EE" stroke-width="1.5" stroke-linecap="round" opacity=".6"/>
+        <rect x="1.5" y="9" width="4" height="7" rx="2" fill="#7C3AED"/>
+        <rect x="18.5" y="9" width="4" height="7" rx="2" fill="#7C3AED"/>
+      </svg>
+      QPM 手机镜像
+    </a>
+    <div class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#how">原理</a>
+      <a href="#start">上手</a>
+      <a href="#faq">FAQ</a>
+    </div>
+    <a class="gh-btn" href="https://github.com/parieses/QuestPhoneMirror" target="_blank" rel="noopener">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap hero">
+    <div>
+      <span class="tag"><span class="dot"></span>v0.1 已发布 · 开源 · 免 root</span>
+      <h1>把手机装进 <span class="grad">Quest 头显</span><br>还能反过来操作它</h1>
+      <p class="sub">一个 APK 双角色：装在手机上是发送端，装在 Quest 上是接收端。画面实时镜像进头显，头显里的点击、滑动、输入会真实作用到手机上。免 PC、免公网、免账号，两端同一 Wi-Fi 即用。</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/parieses/QuestPhoneMirror/releases/latest" target="_blank" rel="noopener">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16"/></svg>
+          下载 APK
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/parieses/QuestPhoneMirror" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          查看源码
+        </a>
+      </div>
+      <div class="meta">
+        <span>协议 <b>MediaProjection + H.264</b></span>
+        <span>平台 <b>Android / Quest 2·3·3S·Pro</b></span>
+        <span>许可 <b>MIT</b></span>
+      </div>
+    </div>
+
+    <div class="hero-art">
+      <div class="art-card">
+        <div class="art-row">
+          <div>
+            <svg width="72" height="72" viewBox="0 0 24 24" fill="none">
+              <rect x="6.5" y="3" width="11" height="18" rx="2.5" stroke="#22D3EE" stroke-width="1.5"/>
+              <path d="M12 18.7v.01" stroke="#22D3EE" stroke-width="2.2" stroke-linecap="round"/>
+              <path d="M9.5 5.5a2.6 2.6 0 0 1 5 0" stroke="#22D3EE" stroke-width="1.4" stroke-linecap="round"/>
+              <path d="M7.5 3.2a4.6 4.6 0 0 1 9 0" stroke="#22D3EE" stroke-width="1.4" stroke-linecap="round" opacity=".6"/>
+            </svg>
+            <div class="art-label"><b>手机</b>发送端</div>
+          </div>
+          <div class="wave-track">
+            <div class="wave"></div><div class="wave w2"></div><div class="wave w3"></div>
+            <div class="pulse-ring"></div>
+          </div>
+          <div>
+            <svg width="72" height="72" viewBox="0 0 24 24" fill="none">
+              <path d="M9 7h6a4 4 0 0 1 0 8H9a4 4 0 0 1 0-8z" stroke="#A5B4FC" stroke-width="1.5"/>
+              <path d="M2 10h2v5a2 2 0 0 1-2-2v-3z" fill="#7C3AED"/>
+              <path d="M20 10h2v3a2 2 0 0 1-2 2v-5z" fill="#7C3AED"/>
+              <rect x="10" y="9.5" width="4" height="3" rx="1.5" fill="#22D3EE"/>
+            </svg>
+            <div class="art-label"><b>Quest</b>接收端</div>
+          </div>
+        </div>
+        <div class="art-foot">H.264 硬编推流 · UDP 自动发现 · 手势回传控制</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Features</div>
+      <h2>为什么做这个</h2>
+      <p>戴着头显时不想摘下来看手机——官方只支持头显投到手机，反过来没有现成方案。</p>
+    </div>
+    <div class="grid">
+      <div class="feat">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="3" width="10" height="13" rx="2"/><path d="M12 19.5v.01"/><path d="M9.5 6.5a2.6 2.6 0 0 1 5 0"/><path d="M7 4a4.8 4.8 0 0 1 10 0" opacity=".55"/></svg></div>
+        <h3>实时镜像</h3>
+        <p>1080p30 H.264 硬编硬解，默认 8.3Mbps，弱网环境可调低码率保流畅。</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="2.2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.5 5.5a9.3 9.3 0 0 0 0 13M18.5 5.5a9.3 9.3 0 0 1 0 13"/></svg></div>
+        <h3>自动发现</h3>
+        <p>手机每秒 UDP 广播，头显打开即连，全程不用输入 IP、不用扫码配对。</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11.5V5.5a2 2 0 0 1 4 0v6"/><path d="M13 9.5a2 2 0 0 1 4 0v4.5a6 6 0 0 1-6 6h-1a6 6 0 0 1-6-6v-2a2 2 0 0 1 4 0"/></svg></div>
+        <h3>反向控制</h3>
+        <p>点击、拖动、文字输入、Home / 返回 / 多任务，走无障碍手势，全机型免 root。</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 12h5l1.5-2h5L16 12h5"/></svg></div>
+        <h3>画面自适应</h3>
+        <p>按手机真实宽高比居中缩放，不拉伸不变形，横竖屏自动适配。</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><path d="M13 2L4.5 13.5H11L10 22l8.5-11.5H12L13 2z"/></svg></div>
+        <h3>秒开画面</h3>
+        <p>新客户端接入立即请求关键帧，不用干等 1 秒 IDR 间隔。</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h10M4 12h13M4 18h7"/><path d="M17 15l3 3-3 3" opacity=".7"/></svg></div>
+        <h3>延迟优先</h3>
+        <p>发送队列深度 3，满了主动丢旧帧——卡顿时优先保新鲜度。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">How it works</div>
+      <h2>工作原理</h2>
+      <p>一条 TCP 连接双向复用，一路视频上行、一路控制下行。</p>
+    </div>
+    <div class="flow">
+      <svg viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" font-family="inherit">
+        <defs>
+          <linearGradient id="lg1" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#22D3EE"/><stop offset="1" stop-color="#818CF8"/>
+          </linearGradient>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0L10 5L0 10z" fill="#22D3EE"/>
+          </marker>
+        </defs>
+
+        <!-- 手机端 -->
+        <rect x="20" y="40" width="200" height="220" rx="18" fill="#1A1836" stroke="#37346B"/>
+        <text x="120" y="72" text-anchor="middle" fill="#F1F5F9" font-size="16" font-weight="700">手机 · 发送端</text>
+        <rect x="45" y="90" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
+        <text x="120" y="116" text-anchor="middle" fill="#A5B4FC" font-size="13">MediaProjection 录屏</text>
+        <rect x="45" y="142" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
+        <text x="120" y="168" text-anchor="middle" fill="#A5B4FC" font-size="13">H.264 硬编 1080p30</text>
+        <rect x="45" y="194" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
+        <text x="120" y="220" text-anchor="middle" fill="#A5B4FC" font-size="13">TCP 服务 · 端口 45556</text>
+
+        <!-- 中间链路 -->
+        <line x1="225" y1="130" x2="355" y2="130" stroke="url(#lg1)" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="290" y="118" text-anchor="middle" fill="#22D3EE" font-size="12.5">H.264 裸流</text>
+        <text x="290" y="152" text-anchor="middle" fill="#64748B" font-size="11.5">[type|len|body] 帧</text>
+        <line x1="355" y1="205" x2="225" y2="205" stroke="#C084FC" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#arr)"/>
+        <text x="290" y="228" text-anchor="middle" fill="#C084FC" font-size="12.5">点击 / 滑动 / 输入</text>
+
+        <!-- 头显端 -->
+        <rect x="360" y="40" width="200" height="220" rx="18" fill="#1A1836" stroke="#37346B"/>
+        <text x="460" y="72" text-anchor="middle" fill="#F1F5F9" font-size="16" font-weight="700">Quest · 接收端</text>
+        <rect x="385" y="90" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
+        <text x="460" y="116" text-anchor="middle" fill="#A5B4FC" font-size="13">UDP 45555 自动发现</text>
+        <rect x="385" y="142" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
+        <text x="460" y="168" text-anchor="middle" fill="#A5B4FC" font-size="13">MediaCodec 硬解</text>
+        <rect x="385" y="194" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
+        <text x="460" y="220" text-anchor="middle" fill="#A5B4FC" font-size="13">SurfaceView 渲染</text>
+
+        <!-- 无障碍回传 -->
+        <line x1="565" y1="205" x2="640" y2="205" stroke="#C084FC" stroke-width="2.5" stroke-dasharray="6 5"/>
+        <rect x="645" y="150" width="190" height="110" rx="16" fill="#14112E" stroke="#7C3AED" stroke-opacity=".6"/>
+        <text x="740" y="180" text-anchor="middle" fill="#F1F5F9" font-size="14" font-weight="700">ControlService</text>
+        <text x="740" y="204" text-anchor="middle" fill="#A5B4FC" font-size="12">无障碍服务 dispatchGesture</text>
+        <text x="740" y="226" text-anchor="middle" fill="#64748B" font-size="11.5">模拟点击/滑动/输入 · 免 root</text>
+        <line x1="740" y1="150" x2="740" y2="130" stroke="#7C3AED" stroke-width="2" stroke-dasharray="4 4"/>
+        <path d="M740 130 h-215" stroke="#7C3AED" stroke-width="2" stroke-dasharray="4 4" fill="none" marker-end="url(#arr)"/>
+        <text x="640" y="122" text-anchor="middle" fill="#C4B5FD" font-size="11.5">手势回传执行</text>
+      </svg>
+      <div class="flow-note">两端只走局域网：UDP 45555 广播发现，TCP 45556 单连接双向复用，不上传任何数据到公网。</div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Getting started</div>
+      <h2>四步上手</h2>
+      <p>首次配置约 5 分钟，之后打开即连。</p>
+    </div>
+    <div class="steps">
+      <div class="step-card">
+        <span class="role">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="3" width="10" height="18" rx="2"/></svg>
+          手机 · 发送端
+        </span>
+        <h3>安装并授权</h3>
+        <ol>
+          <li><b>装 APK</b> —— 直接装，无需任何额外设置</li>
+          <li>打开 App →「我是发送端」→ 点<b>开始投屏</b>，授予录屏权限</li>
+          <li>点<b>「开启控制权限（无障碍）」</b>，在系统设置里启用「QPM 控制服务」</li>
+          <li>保持 App 在前台，并在系统设置里允许其<b>后台运行</b></li>
+        </ol>
+        <div class="tip">第 3 步是关键：不开无障碍，头显那边只能看、不能操作手机。</div>
+      </div>
+      <div class="step-card">
+        <span class="role violet">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7h8a4 4 0 0 1 0 8H8a4 4 0 0 1 0-8z"/><path d="M2 10h2v5H2zM20 10h2v5h-2z"/></svg>
+          Quest · 接收端
+        </span>
+        <h3>开发者模式侧载</h3>
+        <ol>
+          <li>浏览器打开 <b>developer.oculus.com</b> 建一个组织（免费）</li>
+          <li>手机 Meta Horizon app → 设备 → 打开<b>开发者模式</b></li>
+          <li>USB 连 Quest，头显内弹窗点<b>允许 USB 调试</b></li>
+          <li><b>adb install -r app-debug.apk</b>，然后在「资料库 → 未知来源」里启动</li>
+        </ol>
+        <div class="tip">侧载应用不会出现在 Quest 主页桌面，这是 Meta 的机制，不是安装失败。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap" style="max-width: 820px;">
+    <div class="sec-head">
+      <div class="kicker">FAQ</div>
+      <h2>常见问题</h2>
+    </div>
+    <details>
+      <summary>Quest 里找不到刚装的 App？</summary>
+      <p>侧载应用按 Meta 设计不出现在主页桌面。头显内进「资料库 → 右上角筛选 → <b>未知来源</b>」即可找到。</p>
+    </details>
+    <details>
+      <summary>连上了但只能看，点不动手机？</summary>
+      <p>手机端没开无障碍权限。去发送端页点「开启控制权限（无障碍）」，在系统设置里启用「QPM 控制服务」。</p>
+    </details>
+    <details>
+      <summary>头显一直搜不到发送端？</summary>
+      <p>确认两端连同一路由器同一网段；路由器若开了 AP 隔离或手机开热点，都会阻断 UDP 广播。</p>
+    </details>
+    <details>
+      <summary>画面花屏、绿屏？</summary>
+      <p>等约 1 秒让关键帧到达即可恢复；仍有问题就退出接收端重进（接入时会强制请求关键帧）。</p>
+    </details>
+    <details>
+      <summary>Netflix 等 App 投过去是黑的？</summary>
+      <p>DRM 硬件保护内容禁止被捕获，这是 Android 的硬性限制，任何同类工具都无法绕过。</p>
+    </details>
+    <details>
+      <summary>延迟大概多少？能玩游戏用吗？</summary>
+      <p>局域网内硬编硬解端到端约 40–90ms，看通知、回消息、演示操作都够用；不适用于对帧率敏感的竞技场景。</p>
+    </details>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Limitations</div>
+      <h2>已知限制</h2>
+    </div>
+    <div class="limits">
+      <span>手机熄屏即断，需保持亮屏</span>
+      <span>DRM 内容（Netflix 等）黑屏</span>
+      <span>头显控制器为单指针，暂无双指缩放</span>
+      <span>头显端是 2D 面板，非 VR 原生悬浮面板</span>
+      <span>无鉴权，仅限可信局域网</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="final">
+      <h2>现在就试试</h2>
+      <p>下载 APK，手机和 Quest 各装一份，同一 Wi-Fi 下四步上手。</p>
+      <div class="cta" style="justify-content: center;">
+        <a class="btn btn-primary" href="https://github.com/parieses/QuestPhoneMirror/releases/latest" target="_blank" rel="noopener">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16"/></svg>
+          下载 v0.1
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/parieses/QuestPhoneMirror" target="_blank" rel="noopener">阅读文档</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>QPM 手机镜像 · MIT License · Kotlin + Android 原生</span>
+    <a href="https://github.com/parieses/QuestPhoneMirror" target="_blank" rel="noopener">github.com/parieses/QuestPhoneMirror</a>
+  </div>
+</footer>
+
+</body>
+</html>

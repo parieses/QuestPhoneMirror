@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">QPM 手机镜像</string>
+    <string name="accessibility_desc">允许 QPM 在接收端模拟点击、滑动与文字输入来操作本机</string>
+</resources>
