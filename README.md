@@ -151,4 +151,8 @@ push tag 即触发 GitHub Actions 自动构建，产物挂到对应 Release。
 
 ## License
 
-MIT
+本项目采用 [MIT License](LICENSE) 开源许可证。
+
+Copyright (c) 2025-2026 王亮亮
+
+> 完整许可证文本见仓库根目录的 [LICENSE](LICENSE) 文件。

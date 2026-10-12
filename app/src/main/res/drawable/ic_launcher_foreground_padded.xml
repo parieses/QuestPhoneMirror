@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 将满幅前景图缩进 108dp 自适应画布的 66dp 安全区（四边 21dp），
+     避免启动器遮罩把图标边缘裁掉（表现为"图标被放大、周围内容丢失"）。 -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_foreground"
+    android:insetLeft="21dp"
+    android:insetTop="21dp"
+    android:insetRight="21dp"
+    android:insetBottom="21dp" />

@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 class SenderActivity : AppCompatActivity() {
 
     private lateinit var tvStatus: TextView
+    private lateinit var btnAccessibility: Button
 
     private val projectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -38,16 +39,39 @@ class SenderActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_sender)
         tvStatus = findViewById(R.id.tvStatus)
+        btnAccessibility = findViewById(R.id.btnAccessibility)
 
         findViewById<Button>(R.id.btnStart).setOnClickListener {
             val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             projectionLauncher.launch(pm.createScreenCaptureIntent())
         }
 
-        findViewById<Button>(R.id.btnAccessibility).setOnClickListener {
+        btnAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            toast("在列表里找到「QPM 控制服务」并打开，否则对方只能看不能操作")
+            toast("在列表里找到「QPM 控制服务」并打开；若列表里看不到，用 ADB 命令直接启用")
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshAccessibilityStatus()
+    }
+
+    private fun refreshAccessibilityStatus() {
+        val on = isAccessibilityEnabled(this)
+        btnAccessibility.text = if (on) "无障碍：已开启 ✓" else "开启无障碍（点击前往设置）"
+        if (!on) {
+            tvStatus.text = "接收端能看但不能操作本机，请先开启「QPM 控制服务」无障碍"
+        }
+    }
+
+    private fun isAccessibilityEnabled(ctx: Context): Boolean {
+        val expected = ctx.packageName + "/" + ControlService::class.java.name
+        val enabled = Settings.Secure.getString(
+            ctx.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabled.split(":").contains(expected)
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
