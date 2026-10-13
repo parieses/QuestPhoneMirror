@@ -13,6 +13,7 @@ captures/
 
 # 发布签名密钥库：私钥绝不进版本库，由 GitHub Secrets 注入 CI（见 README）。
 *.keystore
+*.b64
 
 # OS
 .DS_Store

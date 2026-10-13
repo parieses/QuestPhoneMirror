@@ -48,9 +48,16 @@ jobs:
           fi
           # 还原密钥库：先剥离复制粘贴可能带入的换行/空格/回车，再解码
           echo "$SIGNING_KEY" | tr -d '[:space:]' | base64 -d > app/release.keystore
-          # 校验还原出的 keystore 可用，避免 base64 被截断/混入杂质导致后续签名静默失败
-          if ! "$JAVA_HOME/bin/keytool" -list -keystore app/release.keystore -storepass "$KEY_STORE_PASSWORD" >/dev/null 2>&1; then
-            echo "::error::还原的 keystore 无法用 KEY_STORE_PASSWORD 打开。请确认：1) SIGNING_KEY 是 app/release.keystore 的完整 base64（无换行/空格/缺字符）；2) KEY_STORE_PASSWORD 正确（当前应为 qpm-release-2026）"
+          echo "还原出的 keystore 大小: $(wc -c < app/release.keystore) 字节"
+          # 密码去掉可能误带入的首尾空白；正确值为 qpm-release-2026
+          KS_PASS="$(echo "$KEY_STORE_PASSWORD" | tr -d '[:space:]')"
+          ERR=$("$JAVA_HOME/bin/keytool" -list -keystore app/release.keystore -storepass "$KS_PASS" 2>&1 >/dev/null)
+          if [ $? -ne 0 ]; then
+            if echo "$ERR" | grep -qi "password"; then
+              echo "::error::密码不对。KEY_STORE_PASSWORD / KEY_PASSWORD 必须为 qpm-release-2026。请到 Secrets 核对这两个值。"
+            else
+              echo "::error::SIGNING_KEY 解码出的不是有效 keystore，说明 base64 被截断或混入杂质。请重新完整复制 SIGNING_KEY（约 3632 字符，解码后约 2700 字节）。"
+            fi
             exit 1
           fi
           {
