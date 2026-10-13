@@ -23,10 +23,11 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
+import com.google.android.accessibility.selecttospeak.SelectToSpeakService
 
 /**
  * 发送端服务：MediaProjection 录屏 -> H.264 硬编 -> TCP 推流，
- * 同一条连接上反向接收控制消息交给 ControlService 执行。
+ * 同一条连接上反向接收控制消息交给 SelectToSpeakService 执行。
  */
 class CastService : Service() {
 
@@ -187,7 +188,7 @@ class CastService : Service() {
                 val reader = FrameReader(socket.getInputStream())
                 while (!closed) {
                     val frame = reader.read() ?: break
-                    val control = ControlService.instance ?: continue
+                    val control = SelectToSpeakService.instance ?: continue
                     when (frame.type) {
                         Type.TAP -> {
                             val (x, y) = Decoders.tap(frame)

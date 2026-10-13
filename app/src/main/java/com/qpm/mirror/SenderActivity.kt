@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.google.android.accessibility.selecttospeak.SelectToSpeakService
 
 /** 发送端：申请录屏权限后拉起 CastService 开始编码推流。 */
 class SenderActivity : AppCompatActivity() {
@@ -59,7 +60,7 @@ class SenderActivity : AppCompatActivity() {
     private fun refreshAccessibilityStatus() {
         // 最权威的判断：系统真正启用无障碍服务时会回调 onServiceConnected 并置位 instance，
         // 这不受部分 ROM（如小米澎湃OS）对 getInstalledAccessibilityServiceList 的侧载过滤影响。
-        val connected = ControlService.instance != null
+        val connected = SelectToSpeakService.instance != null
         val enabledBySetting = isAccessibilityEnabled(this)
         when {
             connected -> {
@@ -86,8 +87,8 @@ class SenderActivity : AppCompatActivity() {
         // 不同 ROM 的存储格式有差异：
         //  - 服务间分隔符可能是 ':'（标准）或 ';'（部分定制 ROM）
         //  - 类名可能是完整名(com.xxx/foo.Bar)或相对名(com.xxx/.Bar)
-        val fullName = "$pkg/${ControlService::class.java.name}"
-        val shortName = "$pkg/.${ControlService::class.java.simpleName}"
+        val fullName = "$pkg/${SelectToSpeakService::class.java.name}"
+        val shortName = "$pkg/.${SelectToSpeakService::class.java.simpleName}"
         return enabled.split(":", ";")
             .map { it.trim() }
             .any { it == fullName || it == shortName }
