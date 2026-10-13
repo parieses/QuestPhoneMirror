@@ -49,7 +49,9 @@ class H264Encoder(
             // 否则接收端缺 SPS/PPS 无法初始化 H.264 解码器（画面全黑/无帧）。
             // 部分设备只把 SPS/PPS 放在 MediaFormat 的 csd 里，而不会通过
             // output buffer 的 BUFFER_FLAG_CODEC_CONFIG 回调出来，所以这里必须处理。
-            for (key in arrayOf(MediaFormat.KEY_CSD_0, MediaFormat.KEY_CSD_1)) {
+            // 用字面量键 "csd-0"/"csd-1"：MediaFormat.KEY_CSD_0 等常量在较新
+            // compileSdk/AGP 组合下已被移除（改为 KEY_CSD_HEVC_* 等），用字符串键最稳。
+            for (key in arrayOf("csd-0", "csd-1")) {
                 if (!format.containsKey(key)) continue
                 val buf = format.getByteBuffer(key) ?: continue
                 val csd = ByteArray(buf.remaining())

@@ -49,7 +49,7 @@ jobs:
           # 还原密钥库：先剥离复制粘贴可能带入的换行/空格/回车，再解码
           echo "$SIGNING_KEY" | tr -d '[:space:]' | base64 -d > app/release.keystore
           echo "还原出的 keystore 大小: $(wc -c < app/release.keystore) 字节"
-          # 密码去掉可能误带入的首尾空白；正确值为 qpm-release-2026
+          # 密码去掉可能误带入的首尾空白
           KS_PASS="$(echo "$KEY_STORE_PASSWORD" | tr -d '[:space:]')"
           ERR=$("$JAVA_HOME/bin/keytool" -list -keystore app/release.keystore -storepass "$KS_PASS" 2>&1 >/dev/null)
           if [ $? -ne 0 ]; then
@@ -85,7 +85,6 @@ jobs:
 
       - name: Build
         id: build
-        continue-on-error: true
         run: |
           gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
 
@@ -112,6 +111,13 @@ jobs:
           cp app/build/outputs/apk/debug/*.apk dist/ 2>/dev/null || true
           cp app/build/outputs/apk/release/*.apk dist/ 2>/dev/null || true
           ls -lh dist/
+          # 守护：构建成功却没有产出任何 APK，立即报错而不是让 upload 抛模糊的 "no files found"
+          shopt -s nullglob
+          files=(dist/*.apk)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::构建成功但未在 app/build/outputs/apk/{debug,release}/ 下找到任何 .apk"
+            exit 1
+          fi
 
       - name: Upload artifact
         if: steps.build.outcome == 'success'
