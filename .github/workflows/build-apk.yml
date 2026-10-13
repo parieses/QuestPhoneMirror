@@ -28,27 +28,31 @@ jobs:
           unzip -q /tmp/gradle.zip -d /tmp
           echo "/tmp/gradle-8.7/bin" >> "$GITHUB_PATH"
 
-      # Release 签名：
-      # - 未配置 Secret 时，直接使用仓库内置的 app/release.keystore + gradle.properties 默认值（零配置，纯 CI 即用）
-      # - 配置了 Secret（RELEASE_KEYSTORE_BASE64 / RELEASE_STORE_PASSWORD / RELEASE_KEY_PASSWORD）时，优先用 Secret 还原的密钥覆盖
-      # 两种方式都产出“正规签名”APK —— 这是澎湃OS/MIUI 放行无障碍权限的前提（debug 签名会被拒签）。
-      - name: Setup release keystore
+      # Release 签名：从 GitHub Secrets 还原密钥库（base64），绝不把私钥/密码写进仓库。
+      # 需在仓库 Settings → Secrets 配置：
+      #   SIGNING_KEY        —— 密钥库文件 app/release.keystore 的 base64（无换行）
+      #   KEY_ALIAS          —— 密钥别名（本项目为 qpm）
+      #   KEY_STORE_PASSWORD —— 密钥库密码
+      #   KEY_PASSWORD       —— 密钥密码
+      # 这是澎湃OS/MIUI 放行无障碍权限的前提（debug 签名会被拒签）。
+      - name: Restore signing key from Secrets
         env:
-          SECRET_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          SECRET_STORE_PW: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          SECRET_KEY_PW: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "$SECRET_B64" ]; then
-            echo "$SECRET_B64" | base64 -d > app/release.keystore
-            sed -i '/^RELEASE_/d' gradle.properties
-            {
-              echo "RELEASE_STORE_FILE=app/release.keystore"
-              echo "RELEASE_STORE_PASSWORD=$SECRET_STORE_PW"
-              echo "RELEASE_KEY_ALIAS=qpm"
-              echo "RELEASE_KEY_PASSWORD=$SECRET_KEY_PW"
-            } >> gradle.properties
+          if [ -z "$SIGNING_KEY" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::缺少签名 Secrets。请在仓库 Settings → Secrets 配置 SIGNING_KEY、KEY_ALIAS、KEY_STORE_PASSWORD、KEY_PASSWORD"
+            exit 1
           fi
-          # 未配置 Secret 时不做任何改动，沿用仓库内置默认值与 app/release.keystore
+          echo "$SIGNING_KEY" | base64 -d > app/release.keystore
+          {
+            echo "RELEASE_STORE_FILE=app/release.keystore"
+            echo "RELEASE_STORE_PASSWORD=$KEY_STORE_PASSWORD"
+            echo "RELEASE_KEY_ALIAS=$KEY_ALIAS"
+            echo "RELEASE_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> gradle.properties
 
       - name: Build
         id: build

@@ -11,12 +11,8 @@ captures/
 *.aab
 *.jks
 
-# 注意：app/release.keystore 已纳入版本库（被下方 ! 否定忽略），
-# 用于 CI 在 GitHub Actions 上零配置产出“正规签名”的 release APK，
-# 否则澎湃OS/MIUI 会拒绝 debug 签名应用获取无障碍权限。
-# 若你介意私钥进入公开仓库，可自行改用 GitHub Secrets（见 README），
-# 然后 `git rm --cached app/release.keystore` 移除跟踪。
-!app/release.keystore
+# 发布签名密钥库：私钥绝不进版本库，由 GitHub Secrets 注入 CI（见 README）。
+*.keystore
 
 # OS
 .DS_Store

@@ -161,9 +161,12 @@ push tag 即触发 GitHub Actions 自动构建，产物挂到对应 Release。
 ### 让服务可用的完整步骤
 
 1. **使用正规签名的 release 包**（不要用 debug 包）：
-   - **纯 CI（推荐，零配置）**：直接 push 一个 `v*` tag，GitHub Actions 会自动用仓库内置的 `app/release.keystore` 打出正规签名的 release APK（密钥已纳入仓库跟踪，见 `.gitignore` 中的说明）。
-   - 本地用 Android Studio 构建 `assembleRelease`：签名配置读取 `local.properties` 里的 `RELEASE_*`，密钥库 `app/release.keystore` 已随仓库提供。
-   - 若想更安全地使用自己的密钥，可在仓库 **Settings → Secrets** 配置 `RELEASE_KEYSTORE_BASE64` / `RELEASE_STORE_PASSWORD` / `RELEASE_KEY_PASSWORD`，CI 会优先用它覆盖内置密钥。
+   - **纯 CI（推荐）**：在仓库 **Settings → Secrets** 配置 `SIGNING_KEY`（密钥库 `app/release.keystore` 的 base64，无换行）、`KEY_ALIAS`、`KEY_STORE_PASSWORD`、`KEY_PASSWORD`，然后 push 一个 `v*` tag，GitHub Actions 会自动还原密钥并打出正规签名的 release APK。私钥/密码只存在于 Secrets，不会进入代码仓库。
+   - 本地用 Android Studio 构建 `assembleRelease`：把 `RELEASE_*` 写入 `local.properties`（该文件已被 `.gitignore` 忽略），或用命令行 `-P` 传入，密钥库 `app/release.keystore` 由本地 `keytool` 生成、不在仓库内。
+   - 转换密钥库为 base64 的命令（在持有 keystore 的机器上执行）：
+     - macOS / Linux：`base64 -w0 app/release.keystore`
+     - Windows PowerShell：`[Convert]::ToBase64String([IO.File]::ReadAllBytes("app/release.keystore"))`
+     - 把输出整段粘贴到 Secrets 的 `SIGNING_KEY` 即可。
 2. **卸载旧包**：release 与之前 debug 包签名不同，必须先卸载再装，否则 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
 3. **安装 release APK**。
 4. **允许受限设置**：`设置 → 应用管理 → 找到 QPM → 右上角 ⋮ → 允许受限设置`，验证指纹/密码。
