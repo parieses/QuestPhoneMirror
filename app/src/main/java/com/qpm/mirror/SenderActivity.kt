@@ -1,14 +1,11 @@
 package com.qpm.mirror
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Activity
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.provider.Settings
-import android.view.accessibility.AccessibilityManager
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -50,9 +47,6 @@ class SenderActivity : AppCompatActivity() {
         }
 
         btnAccessibility.setOnClickListener {
-            if (!isServiceInstalled(this)) {
-                toast("系统未识别本应用的无障碍服务：请确认装在第一空间（非双开），并彻底卸载后重装")
-            }
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
     }
@@ -63,20 +57,22 @@ class SenderActivity : AppCompatActivity() {
     }
 
     private fun refreshAccessibilityStatus() {
-        val installed = isServiceInstalled(this)
-        val enabled = isAccessibilityEnabled(this)
+        // 最权威的判断：系统真正启用无障碍服务时会回调 onServiceConnected 并置位 instance，
+        // 这不受部分 ROM（如小米澎湃OS）对 getInstalledAccessibilityServiceList 的侧载过滤影响。
+        val connected = ControlService.instance != null
+        val enabledBySetting = isAccessibilityEnabled(this)
         when {
-            enabled -> {
-                btnAccessibility.text = "无障碍：已开启 ✓"
+            connected -> {
+                btnAccessibility.text = "无障碍：已启用 ✓"
                 tvStatus.text = "接收端可操作本机（点击可重新进入设置）"
             }
-            installed -> {
-                btnAccessibility.text = "开启无障碍（点击前往设置）"
-                tvStatus.text = "系统已识别「QPM 控制服务」，去设置里把它打开即可"
+            enabledBySetting -> {
+                btnAccessibility.text = "无障碍：已开启 ✓"
+                tvStatus.text = "系统已记录本服务为开启，可直接使用"
             }
             else -> {
-                btnAccessibility.text = "无障碍：系统未识别此服务"
-                tvStatus.text = "系统服务列表里没有本应用的无障碍服务——多半是装错空间/残包，请卸载后重装，或用 ADB 诊断"
+                btnAccessibility.text = "开启控制权限（无障碍）"
+                tvStatus.text = "未在系统开启无障碍。若设置列表看不到「QPM 控制服务」，请用 ADB 直接启用（启用后上方变 ✓）"
             }
         }
     }
@@ -95,20 +91,6 @@ class SenderActivity : AppCompatActivity() {
         return enabled.split(":", ";")
             .map { it.trim() }
             .any { it == fullName || it == shortName }
-    }
-
-    /**
-     * 通过系统 API 查询本服务是否已被系统识别并登记为"已安装的无障碍服务"。
-     * 与 isAccessibilityEnabled 不同：后者看"是否开启"，本方法看"系统有没有在
-     * 已安装服务列表里看到它"。若返回 false，说明不是 GUI 隐藏，而是 APK 没有把
-     * 服务注册进当前用户（装错空间/双开副本/残包/构建未打包 manifest）。
-     */
-    private fun isServiceInstalled(ctx: Context): Boolean {
-        val am = ctx.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-        val cn = ComponentName(ctx, ControlService::class.java)
-        return am.getInstalledAccessibilityServiceList()
-            .map { it.resolveInfo.serviceInfo }
-            .any { ComponentName(it.packageName, it.name) == cn }
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
