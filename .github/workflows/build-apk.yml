@@ -46,7 +46,13 @@ jobs:
             echo "::error::缺少签名 Secrets。请在仓库 Settings → Secrets 配置 SIGNING_KEY、KEY_ALIAS、KEY_STORE_PASSWORD、KEY_PASSWORD"
             exit 1
           fi
-          echo "$SIGNING_KEY" | base64 -d > app/release.keystore
+          # 还原密钥库：先剥离复制粘贴可能带入的换行/空格/回车，再解码
+          echo "$SIGNING_KEY" | tr -d '[:space:]' | base64 -d > app/release.keystore
+          # 校验还原出的 keystore 可用，避免 base64 被截断/混入杂质导致后续签名静默失败
+          if ! "$JAVA_HOME/bin/keytool" -list -keystore app/release.keystore -storepass "$KEY_STORE_PASSWORD" >/dev/null 2>&1; then
+            echo "::error::还原的 keystore 无法用 KEY_STORE_PASSWORD 打开。请确认：1) SIGNING_KEY 是 app/release.keystore 的完整 base64（无换行/空格/缺字符）；2) KEY_STORE_PASSWORD 正确（当前应为 qpm-release-2026）"
+            exit 1
+          fi
           {
             echo "RELEASE_STORE_FILE=app/release.keystore"
             echo "RELEASE_STORE_PASSWORD=$KEY_STORE_PASSWORD"
