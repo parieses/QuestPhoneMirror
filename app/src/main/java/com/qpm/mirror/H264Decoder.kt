@@ -17,8 +17,14 @@ class H264Decoder(
     private val codec: MediaCodec =
         MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
 
+    // 异步模式下输入缓冲由 onInputBufferAvailable 回调分配，必须入队后再由 feed() 取用；
+    // 不能依赖 dequeueInputBuffer（异步模式下它不等待、直接返回 -1，会导致帧全丢、画面黑屏）。
+    private val availableInput = ArrayDeque<Int>()
+
     private val callback = object : MediaCodec.Callback() {
-        override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
+        override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
+            synchronized(availableInput) { availableInput.addLast(index) }
+        }
 
         override fun onOutputBufferAvailable(
             codec: MediaCodec,
@@ -59,8 +65,9 @@ class H264Decoder(
         val data = ByteArray(body.size - 9)
         System.arraycopy(body, 9, data, 0, data.size)
 
-        val index = codec.dequeueInputBuffer(10_000)
-        if (index < 0) return
+        // 异步模式下不能用 dequeueInputBuffer（不等待、直接返回 -1），必须从回调入队的空闲缓冲里取
+        val index = synchronized(availableInput) { availableInput.removeFirstOrNull() }
+            ?: return  // 暂无空闲输入缓冲，丢弃该帧以保流畅（不阻塞网络线程）
         val buffer = codec.getInputBuffer(index) ?: return
         buffer.clear()
         buffer.put(data)
