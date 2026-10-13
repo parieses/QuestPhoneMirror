@@ -44,7 +44,27 @@ class H264Encoder(
             onFrame(out, info.size, flags, info.presentationTimeUs)
         }
 
-        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) = Unit
+        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            // 把 SPS/PPS (csd-0 / csd-1) 作为配置帧发出。
+            // 否则接收端缺 SPS/PPS 无法初始化 H.264 解码器（画面全黑/无帧）。
+            // 部分设备只把 SPS/PPS 放在 MediaFormat 的 csd 里，而不会通过
+            // output buffer 的 BUFFER_FLAG_CODEC_CONFIG 回调出来，所以这里必须处理。
+            for (key in arrayOf(MediaFormat.KEY_CSD_0, MediaFormat.KEY_CSD_1)) {
+                if (!format.containsKey(key)) continue
+                val buf = format.getByteBuffer(key) ?: continue
+                val csd = ByteArray(buf.remaining())
+                buf.get(csd)
+                if (csd.isEmpty()) continue
+                // 确保带 Annex-B 起始码（00 00 00 01），接收端按起始码解析最稳
+                val out = if (csd.size >= 4 && csd[0] == 0.toByte() && csd[1] == 0.toByte()
+                    && csd[2] == 0.toByte() && csd[3] == 1.toByte()) {
+                    csd
+                } else {
+                    byteArrayOf(0, 0, 0, 1) + csd
+                }
+                onFrame(out, out.size, FLAG_CONFIG, 0L)
+            }
+        }
 
         override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) = Unit
     }

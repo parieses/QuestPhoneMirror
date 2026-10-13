@@ -21,3 +21,6 @@ Thumbs.db
 
 # 图标生成工作目录
 .iconwork/
+
+# 调试用 Python 脚本（接收端/模拟发送端），不进版本库
+tools/qpm_receiver/

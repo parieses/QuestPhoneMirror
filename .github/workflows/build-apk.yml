@@ -67,6 +67,22 @@ jobs:
             echo "RELEASE_KEY_PASSWORD=$KEY_PASSWORD"
           } >> gradle.properties
 
+      - name: Set version from tag
+        run: |
+          TAG="${GITHUB_REF_NAME:-dev}"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            TAG="dev-${GITHUB_SHA::7}"
+          fi
+          VNUM="${TAG#v}"
+          VCODE=$(echo "$VNUM" | grep -oE '[0-9]+' | paste -sd '' )
+          VCODE="${VCODE:-1}"
+          VCODE=$((10#$VCODE))
+          {
+            echo "VERSION_NAME=$TAG"
+            echo "VERSION_CODE=$VCODE"
+          } >> gradle.properties
+          echo "版本: name=$TAG code=$VCODE"
+
       - name: Build
         id: build
         continue-on-error: true
