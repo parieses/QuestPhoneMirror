@@ -28,6 +28,28 @@ jobs:
           unzip -q /tmp/gradle.zip -d /tmp
           echo "/tmp/gradle-8.7/bin" >> "$GITHUB_PATH"
 
+      # Release 签名：
+      # - 未配置 Secret 时，直接使用仓库内置的 app/release.keystore + gradle.properties 默认值（零配置，纯 CI 即用）
+      # - 配置了 Secret（RELEASE_KEYSTORE_BASE64 / RELEASE_STORE_PASSWORD / RELEASE_KEY_PASSWORD）时，优先用 Secret 还原的密钥覆盖
+      # 两种方式都产出“正规签名”APK —— 这是澎湃OS/MIUI 放行无障碍权限的前提（debug 签名会被拒签）。
+      - name: Setup release keystore
+        env:
+          SECRET_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          SECRET_STORE_PW: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          SECRET_KEY_PW: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$SECRET_B64" ]; then
+            echo "$SECRET_B64" | base64 -d > app/release.keystore
+            sed -i '/^RELEASE_/d' gradle.properties
+            {
+              echo "RELEASE_STORE_FILE=app/release.keystore"
+              echo "RELEASE_STORE_PASSWORD=$SECRET_STORE_PW"
+              echo "RELEASE_KEY_ALIAS=qpm"
+              echo "RELEASE_KEY_PASSWORD=$SECRET_KEY_PW"
+            } >> gradle.properties
+          fi
+          # 未配置 Secret 时不做任何改动，沿用仓库内置默认值与 app/release.keystore
+
       - name: Build
         id: build
         continue-on-error: true

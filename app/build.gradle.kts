@@ -16,14 +16,30 @@ android {
     }
 
     signingConfigs {
-        // 侧载场景下复用 debug 密钥签名 release，使 CI 的 assembleRelease 可产出可用 APK。
-        // 正式发布前请替换为正式密钥（storeFile/storePassword/keyAlias/keyPassword）。
+        // 专用 release 密钥（非 debug 签名）。
+        // 重要：澎湃OS / MIUI 会拒绝 debug 签名应用获取无障碍、悬浮窗等敏感权限，
+        // 因此 release 必须使用独立密钥，绝不能复用 debug 密钥（否则装到小米/红米上
+        // 无障碍服务连开关都开不了）。详见 README “小米/澎湃OS 无障碍”章节。
+        // 密钥文件: app/release.keystore（由开发者本地用 keytool 生成，已加入 .gitignore），
+        // 密码等通过 RELEASE_* 属性提供：本地放 local.properties，CI 通过 -P/secret 注入。
         create("release") {
-            val d = signingConfigs.getByName("debug")
-            storeFile = d.storeFile
-            storePassword = d.storePassword
-            keyAlias = d.keyAlias
-            keyPassword = d.keyPassword
+            val ksFile = rootProject.file(
+                (project.findProperty("RELEASE_STORE_FILE") as String?) ?: "app/release.keystore"
+            )
+            if (ksFile.exists()) {
+                storeFile = ksFile
+                storePassword = (project.findProperty("RELEASE_STORE_PASSWORD") as String?) ?: ""
+                keyAlias = (project.findProperty("RELEASE_KEY_ALIAS") as String?) ?: "qpm"
+                keyPassword = (project.findProperty("RELEASE_KEY_PASSWORD") as String?) ?: ""
+            } else {
+                // 未生成专用密钥时回退到 debug 密钥：仅保证本地/CI 能构建，
+                // 但产物会被澎湃OS 拒绝授予无障碍权限，仅供调试。
+                val d = signingConfigs.getByName("debug")
+                storeFile = d.storeFile
+                storePassword = d.storePassword
+                keyAlias = d.keyAlias
+                keyPassword = d.keyPassword
+            }
         }
     }
 

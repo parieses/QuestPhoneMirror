@@ -149,6 +149,28 @@ git push origin v0.2
 
 push tag 即触发 GitHub Actions 自动构建，产物挂到对应 Release。
 
+## 小米 / 澎湃OS 无障碍权限（重要）
+
+本项目的「反向控制」依赖 Android 无障碍服务（`ControlService`）。在小米 / 红米（MIUI / 澎湃OS）上，侧载应用的无障碍服务**默认被系统隐藏且无法启用**，表现为：设置里看不到该服务、`adb shell settings put secure enabled_accessibility_services ...` 写入后被系统丢弃、`cmd accessibility enable` 不可用。
+
+根因有两点，必须同时处理：
+
+1. **debug 签名被拒签**：澎湃OS / MIUI 会拒绝 `debug 签名` 的应用获取无障碍、悬浮窗等敏感权限。**release 包必须使用独立密钥**，绝不能复用 debug 密钥（见 `app/build.gradle.kts` 的 `signingConfigs.release`）。
+2. **受限设置（Restricted Settings）**：Android 13+ 对侧载应用隐藏高危权限开关，需手动放行。
+
+### 让服务可用的完整步骤
+
+1. **使用正规签名的 release 包**（不要用 debug 包）：
+   - **纯 CI（推荐，零配置）**：直接 push 一个 `v*` tag，GitHub Actions 会自动用仓库内置的 `app/release.keystore` 打出正规签名的 release APK（密钥已纳入仓库跟踪，见 `.gitignore` 中的说明）。
+   - 本地用 Android Studio 构建 `assembleRelease`：签名配置读取 `local.properties` 里的 `RELEASE_*`，密钥库 `app/release.keystore` 已随仓库提供。
+   - 若想更安全地使用自己的密钥，可在仓库 **Settings → Secrets** 配置 `RELEASE_KEYSTORE_BASE64` / `RELEASE_STORE_PASSWORD` / `RELEASE_KEY_PASSWORD`，CI 会优先用它覆盖内置密钥。
+2. **卸载旧包**：release 与之前 debug 包签名不同，必须先卸载再装，否则 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
+3. **安装 release APK**。
+4. **允许受限设置**：`设置 → 应用管理 → 找到 QPM → 右上角 ⋮ → 允许受限设置`，验证指纹/密码。
+5. **开启服务**：`设置 → 更多设置 → 无障碍`，在「已下载的服务」里找到「QPM 控制服务」并打开。
+   - 若 GUI 仍找不到，可尝试 `adb shell settings put secure enabled_accessibility_services com.qpm.mirror/.ControlService` + `accessibility_enabled 1`（正规签名 + 已允许受限设置后通常可生效）。
+6. 回到 App 发送端页面，状态栏显示「无障碍：已启用 ✓」即代表系统已真正拉起服务，对方可操作本机。
+
 ## License
 
 本项目采用 [MIT License](LICENSE) 开源许可证。
