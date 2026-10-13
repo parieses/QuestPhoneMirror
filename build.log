@@ -1,0 +1,180 @@
+
+Welcome to Gradle 8.7!
+
+Here are the highlights of this release:
+ - Compiling and testing with Java 22
+ - Cacheable Groovy script compilation
+ - New methods in lazy collection properties
+
+For more details see https://docs.gradle.org/8.7/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.7/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :app:checkKotlinGradlePluginConfigurationErrors
+> Task :protocol:preBuild UP-TO-DATE
+> Task :protocol:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResValues
+> Task :protocol:writeDebugAarMetadata
+> Task :protocol:generateDebugResValues
+> Task :protocol:generateDebugResources
+> Task :app:checkDebugAarMetadata
+> Task :protocol:packageDebugResources
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources
+> Task :app:packageDebugResources
+> Task :app:mergeDebugResources
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :protocol:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :protocol:processDebugManifest
+> Task :protocol:compileDebugLibraryResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:processDebugManifestForPackage
+> Task :protocol:checkKotlinGradlePluginConfigurationErrors
+> Task :protocol:parseDebugLocalResources
+> Task :protocol:javaPreCompileDebug
+> Task :app:javaPreCompileDebug
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :protocol:mergeDebugShaders
+> Task :protocol:compileDebugShaders NO-SOURCE
+> Task :protocol:generateDebugAssets UP-TO-DATE
+> Task :protocol:generateDebugRFile
+> Task :protocol:packageDebugAssets
+> Task :app:processDebugResources
+> Task :app:mergeDebugAssets
+> Task :app:compressDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:mergeDebugStartupProfile
+> Task :app:checkDebugDuplicateClasses
+> Task :app:mergeDebugJniLibFolders
+> Task :protocol:compileDebugKotlin
+> Task :protocol:compileDebugJavaWithJavac NO-SOURCE
+> Task :protocol:bundleLibRuntimeToJarDebug
+> Task :protocol:processDebugJavaRes
+> Task :protocol:bundleLibCompileToJarDebug
+> Task :protocol:bundleLibRuntimeToDirDebug
+> Task :protocol:mergeDebugJniLibFolders
+> Task :protocol:mergeDebugNativeLibs NO-SOURCE
+> Task :protocol:copyDebugJniLibsProjectOnly
+> Task :app:mergeLibDexDebug
+> Task :app:mergeDebugNativeLibs NO-SOURCE
+> Task :app:stripDebugDebugSymbols NO-SOURCE
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:buildKotlinToolingMetadata
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :protocol:preReleaseBuild UP-TO-DATE
+> Task :app:generateReleaseResValues
+> Task :protocol:writeReleaseAarMetadata
+> Task :app:checkReleaseAarMetadata
+> Task :protocol:generateReleaseResValues
+> Task :protocol:generateReleaseResources
+> Task :protocol:packageReleaseResources
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:generateReleaseResources
+> Task :app:packageReleaseResources
+> Task :app:parseReleaseLocalResources
+> Task :app:mergeExtDexDebug
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:extractDeepLinksRelease
+> Task :protocol:extractDeepLinksRelease
+> Task :protocol:compileReleaseLibraryResources
+> Task :protocol:processReleaseManifest
+> Task :protocol:parseReleaseLocalResources
+> Task :app:mergeReleaseResources
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:processReleaseManifestForPackage
+> Task :protocol:javaPreCompileRelease
+> Task :app:javaPreCompileRelease
+> Task :protocol:generateReleaseRFile
+> Task :app:extractProguardFiles
+> Task :protocol:extractProguardFiles
+> Task :protocol:prepareLintJarForPublish
+> Task :protocol:mergeReleaseJniLibFolders
+> Task :protocol:mergeReleaseNativeLibs NO-SOURCE
+> Task :protocol:stripReleaseDebugSymbols NO-SOURCE
+> Task :protocol:copyReleaseJniLibsProjectAndLocalJars
+> Task :protocol:extractDeepLinksForAarRelease
+> Task :protocol:mergeReleaseShaders
+> Task :protocol:compileReleaseShaders NO-SOURCE
+> Task :protocol:generateReleaseAssets UP-TO-DATE
+> Task :protocol:packageReleaseAssets
+> Task :protocol:prepareReleaseArtProfile
+> Task :protocol:writeReleaseLintModelMetadata
+> Task :app:mergeReleaseJniLibFolders
+> Task :protocol:copyReleaseJniLibsProjectOnly
+> Task :app:mergeReleaseNativeLibs NO-SOURCE
+> Task :app:stripReleaseDebugSymbols NO-SOURCE
+> Task :app:extractReleaseNativeSymbolTables NO-SOURCE
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:checkReleaseDuplicateClasses
+> Task :app:desugarReleaseFileDependencies
+> Task :app:mergeReleaseStartupProfile
+> Task :protocol:compileReleaseKotlin
+> Task :app:processReleaseResources
+> Task :app:compileDebugKotlin
+> Task :app:compileDebugJavaWithJavac NO-SOURCE
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:processDebugJavaRes
+> Task :protocol:compileReleaseJavaWithJavac NO-SOURCE
+> Task :protocol:bundleLibCompileToJarRelease
+> Task :app:mergeProjectDexDebug
+> Task :protocol:bundleLibRuntimeToJarRelease
+> Task :protocol:processReleaseJavaRes
+> Task :protocol:createFullJarRelease
+> Task :app:mergeDebugJavaResource
+> Task :protocol:generateReleaseLintModel
+> Task :app:mergeExtDexRelease
+> Task :app:compileReleaseKotlin
+> Task :protocol:extractReleaseAnnotations
+> Task :app:compileReleaseJavaWithJavac NO-SOURCE
+> Task :app:generateReleaseLintVitalReportModel
+> Task :protocol:mergeReleaseGeneratedProguardFiles
+> Task :protocol:mergeReleaseConsumerProguardFiles
+> Task :protocol:mergeReleaseJavaResource
+> Task :protocol:syncReleaseLibJars
+> Task :protocol:bundleReleaseLocalLintAar
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+> Task :protocol:generateReleaseLintVitalModel
+> Task :protocol:bundleLibRuntimeToDirRelease
+> Task :app:dexBuilderRelease
+> Task :app:mergeReleaseArtProfile
+> Task :app:mergeReleaseGlobalSynthetics
+> Task :app:mergeReleaseShaders
+> Task :app:compileReleaseShaders NO-SOURCE
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:mergeReleaseAssets
+> Task :app:compressReleaseAssets
+> Task :app:extractReleaseVersionControlInfo
+> Task :app:processReleaseJavaRes
+> Task :app:mergeReleaseJavaResource
+> Task :app:collectReleaseDependencies
+> Task :app:optimizeReleaseResources
+> Task :app:sdkReleaseDependencyData
+> Task :app:validateSigningRelease
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:mergeDexRelease
+> Task :app:compileReleaseArtProfile
+> Task :app:packageRelease
+> Task :app:createReleaseApkListingFileRedirect
+> Task :protocol:lintVitalAnalyzeRelease
+> Task :app:lintVitalAnalyzeRelease
+> Task :app:lintVitalReportRelease
+> Task :app:lintVitalRelease
+> Task :app:assembleRelease
+
+BUILD SUCCESSFUL in 2m 12s
+135 actionable tasks: 135 executed
