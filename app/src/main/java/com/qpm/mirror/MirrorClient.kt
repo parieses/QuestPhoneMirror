@@ -188,7 +188,10 @@ class MirrorClient(
                     onRejected(Decoders.textOf(frame))
                 }
                 Type.CLIPBOARD -> onClipboard(Decoders.clipboardOf(frame))
-                Type.FILE_PUSH_RES -> onFilePushResult(Decoders.filePushResOf(frame))
+                Type.FILE_PUSH_RES -> {
+                    val (ok, msg) = Decoders.filePushResOf(frame)
+                    onFilePushResult(ok, msg)
+                }
                 Type.STATS -> onStats(Decoders.statsOf(frame))
             }
         }

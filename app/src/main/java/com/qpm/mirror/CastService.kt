@@ -27,6 +27,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.qpm.protocol.Decoders
 import com.qpm.protocol.Discovery
+import com.qpm.protocol.FilePushChunk
 import com.qpm.protocol.Frame
 import com.qpm.protocol.FrameReader
 import com.qpm.protocol.Proto
@@ -145,9 +146,19 @@ class CastService : Service() {
             }
         }
 
-        /** 某台接收端当前是否被允许连接（白名单为空时全部允许）。 */
-        fun isReceiverAllowed(host: String): Boolean =
-            allowedHosts.isEmpty() || allowedHosts.contains(host)
+    /** 某台接收端当前是否被允许连接（白名单为空时全部允许）。 */
+    fun isReceiverAllowed(host: String): Boolean =
+        allowedHosts.isEmpty() || allowedHosts.contains(host)
+
+    /**
+     * 把剪贴板文本广播给全部已连接接收端（SenderActivity 监听复制变化时调用）。
+     * 服务未运行时无接收端可发，静默跳过。
+     */
+    fun broadcastClipboard(text: String) {
+        if (text.isEmpty()) return
+        val frame = Proto.clipboard(text)
+        instanceRef?.clients?.forEach { it.sendReliable(frame) }
+    }
 
         /**
          * 允许/禁止某台接收端。
@@ -568,13 +579,6 @@ class CastService : Service() {
                 .onFailure { Log.w(TAG, "写手机剪贴板失败: ${it.message}") }
             postStatus(getString(R.string.cast_clip_copied))
         }
-    }
-
-    /** 把剪贴板文本广播给全部已配对接收端（SenderActivity 监听复制变化时调用）。 */
-    fun broadcastClipboard(text: String) {
-        if (text.isEmpty()) return
-        val frame = Proto.clipboard(text)
-        clients.forEach { it.sendReliable(frame) }
     }
 
     /** 单个接收端连接：配对通过前视频/控制/文件全部门控。 */
