@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.10-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.13-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -43,9 +43,13 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 | 配对码保护 | 每次投屏随机生成 6 位配对码，输对才推流；连续输错 3 次断开 |
 | 连接管理 | 多接收端场景：扫描列表（设备名 + IP + 状态）、勾选放行、取消勾选立即断开并拒绝重连 |
 | 反向控制 | 点击 / 拖动 / 文字输入 / Home·返回·多任务键，走 `AccessibilityService.dispatchGesture` |
-| 文件浏览 | 目录列表、图片 / 文本应用内预览、其他文件 64KB 分片下载到本机 |
+| 文件互传 | 浏览 / 下载发送端文件，也可把本机文件推送回发送端共享存储（均 64KB 分片） |
 | 防自动息屏 | 投屏期间临时禁用系统熄屏（需「修改系统设置」权限），退出自动恢复 |
 | 检查更新 | 入口页一键检查 GitHub Releases 最新版，下载 APK 并拉起系统安装 |
+| 方向同步 | 手机横竖屏旋转后自动重建画布并通知接收端重排，画面不压扁、触摸不错位 |
+| 加密通道 | 连接先 ECDH 密钥交换，帧体 AES-256-GCM 加密，防局域网嗅探（兼容旧版明文回落） |
+| 文件推送 | 接收端选本机文件推送到发送端共享存储，进度可见、成功回显路径 |
+| 投屏统计 | 接收端一键开浮窗，实时显示分辨率 / 帧率 / 码率 / 丢帧 / 解码帧率 |
 | 健壮性 | CSD 三重保险 + IDR 前重发 SPS/PPS、队列满丢旧帧保延迟、编解码错误直达 UI |
 
 * * *
@@ -131,11 +135,53 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 > **Gitee 镜像配置（可选，国内下载再加速）**：Gitee → 新建仓库（建议同名 `QuestPhoneMirror`）→ 设置 → 仓库镜像管理 → 添加 GitHub 镜像 `https://github.com/parieses/QuestPhoneMirror.git`（勾选同步 Release），之后每次 GitHub 发版 Gitee 自动同步，App 下载自动走 Gitee 直连。
 
+**📐 方向同步（旋转适配）**
+
+- `VirtualDisplay` 用 `AUTO_MIRROR` 只镜像内容不缩放，手机横竖屏切换后画面会被压扁 / 裁剪
+- 监听 `OrientationEventListener`，按 90° 分桶防抖；旋转后用 `Display.getRealMetrics()` 取实时尺寸重建 VirtualDisplay + H264Encoder
+- 重建后重发 `SCREEN_INFO`（`0x20`），接收端据此重排 `SurfaceView` 宽高比与 `TouchMapper` 触摸映射，**画面与点击同步适配**
+
+**🔐 加密通道**
+
+- 连接建立后双方先交换 EC(`secp256r1`) 临时公钥（`KEY_EXCHANGE` `0x1E`，X.509 编码）；ECDH 导出共享密钥经 SHA-256 派生出 AES-256 会话密钥
+- 此后所有帧体走 AES/GCM/NoPadding 加密（128-bit tag）；nonce = 方向位 + 帧序号隐式计数——TCP 有序保证收发计数同步，不同方向位错开防止 nonce 重用
+- 加密只发生在传输层封装，**帧格式与 Proto 编解码完全不变**；密钥交换缺失 / 失败时自动回落明文并打日志，兼容旧版本客户端
+
+**📤 文件双向推送**
+
+- 在「文件浏览」之外，接收端可主动把本机文件推送到发送端共享存储：接收端「📤 推送」选文件 → 按 64KB 分片发 `FILE_PUSH_REQ` / `FILE_PUSH_DATA`
+- 发送端校验目标路径落在共享存储根目录内后落盘，完成回 `FILE_PUSH_RES`（`ok=1` 时 msg 为手机侧保存路径）
+- 推送与下载同源受 `FileRelay` 根目录白名单约束，无法越权写入系统目录
+
+**📊 投屏统计浮窗**
+
+- 发送端编码回调累计帧数 / 字节 / 丢帧，每秒经 `STATS`（`0x1F`）帧广播给已配对接收端
+- 接收端「📊 统计」开关开启后右上角半透明浮窗每 1s 刷新：**分辨率 / 推流 FPS / 码率 / 丢帧 / 解码 FPS**
+- 码率、丢帧直接反映网络与编码压力，卡顿时先降画质再查网络
+
 **🔒 其他**
 
 - **防自动息屏**：投屏期间临时改 `SCREEN_OFF_TIMEOUT`，退出恢复原值（MediaProjection 熄屏即停，见「已知限制」）
 - **两端常亮**：发送端 / 接收端 Activity 均加 `FLAG_KEEP_SCREEN_ON`
 - **错误可达**：编解码 `onError`、端口占用、投影授权撤销、配对事件全部经状态通道显示在 UI 上，不再黑屏无日志
+
+* * *
+
+## 📝 更新日志
+
+### v0.13（本轮）
+
+**新功能**
+- **方向同步优化**：手机横竖屏旋转后自动重建画布并重排接收端画面与触摸映射，画面不压扁、点击不错位
+- **加密通道**：连接先 ECDH(`secp256r1`) 密钥交换，帧体 AES-256-GCM 加密，防局域网嗅探；密钥交换失败自动回落明文（兼容旧版客户端）
+- **文件双向推送**：接收端可主动把本机文件推送到发送端共享存储（64KB 分片、进度可见、成功回显手机侧保存路径）
+- **投屏统计浮窗**：接收端一键开浮窗，实时显示分辨率 / 帧率 / 码率 / 丢帧 / 解码帧率
+
+**修复**
+- 单发单收仍被要求输入配对码：发送端把自身 beacon 误判为「其他发送端」导致免密直连被拒；已过滤本机地址、并让手动 IP 连接也先尝试免密直连
+- 输入配对码后卡在「正在配对」：加密握手时 `HELLO` 占用了加密计数器槽位，使 `PAIR` 的 nonce 错位、GCM 校验失败；已将 `HELLO` 改为握手前明文发送
+- 点接收端再返回时闪退：解码器异步回调在 Surface 销毁后仍向已销毁 Surface 渲染；已加生命周期守卫
+- 接收端无刷新入口：顶部新增 🔄 刷新按钮，并在免密直连等待超时时提示刷新重搜
 
 * * *
 
@@ -172,7 +218,7 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 1. **发现**：UDP 监听 `45555`，收到 `QPM1|<tcpPort>|<w>x<h>` 即得到发送端 IP 与端口
 2. **连接**：TCP 连接 `<ip>:45556`
-3. **握手**：连接后立即发 `HELLO`（`0x1B`，UTF-8 设备名）；再发 `PAIR`（`0x14`）——空 body = 免密直连请求（仅当局域网只有一个发送端时被接受），非空 = 6 位配对码；等 `PAIR_RESULT`（`0x15`，1=成功）；被白名单拒绝会先收到 `REJECT`（`0x1C`）再被断开
+3. **握手**：连接后双方先交换 `KEY_EXCHANGE`（`0x1E`，X.509 编码的 EC 公钥，**明文发送**）——接收端连上先发本方 KE，随后读取对端 KE 完成握手；握手完成后后续帧体 AES-GCM 加密（旧版本不交换则回落明文）。随后接收端发 `HELLO`（`0x1B`，UTF-8 设备名）；再发 `PAIR`（`0x14`）——空 body = 免密直连请求（仅当局域网只有一个发送端时被接受），非空 = 6 位配对码；等 `PAIR_RESULT`（`0x15`，1=成功）；被白名单拒绝会先收到 `REJECT`（`0x1C`）再被断开
 4. **收视频**：`VIDEO_FRAME`（`0x01`）= `[pts:u64][flags:u8][h264裸流]`，flags bit0=关键帧、bit1=SPS/PPS；SPS/PPS 与关键帧同帧透传，原样喂解码器；首帧前先收 `SCREEN_INFO`（`0x20`）得知分辨率
 5. **发控制**：`TAP` / `SWIPE` / `TEXT` / `KEY`（`0x10-0x13`）写回同一连接，仅配对成功后有效
 6. **被扫描到**（可选）：向 `255.255.255.255:45555` 每秒广播 `QPMR|<设备名>`，发送端「连接管理」即出现本设备
@@ -196,6 +242,12 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 | `0x1A` FILE_ERROR | 手机→接收端 | UTF-8 错误信息（未授权/路径非法/读取失败） |
 | `0x1B` HELLO | 接收端→手机 | UTF-8 设备名（连接建立后立即报送） |
 | `0x1C` REJECT | 手机→接收端 | UTF-8 拒绝原因（如未在白名单），发送后即断开 |
+| `0x1D` CLIPBOARD | 双向 | UTF-8 文本（手机→接收端=写入接收端剪贴板；接收端→手机=写入手机剪贴板） |
+| `0x1E` KEY_EXCHANGE | 双向 | X.509 编码的 EC(secp256r1) 临时公钥；连接后最先发送，此后帧体全部 AES-GCM 加密 |
+| `0x1F` STATS | 手机→接收端 | `[fps:u16][bitrateBps:u32][w:u16][h:u16][dropped:u16]`，每秒广播 |
+| `0x21` FILE_PUSH_REQ | 接收端→手机 | `[total:u64][path UTF-8]`（手机侧目标路径） |
+| `0x22` FILE_PUSH_DATA | 接收端→手机 | `[offset:u64][eof:u8][chunk]`，64KB 分片 |
+| `0x23` FILE_PUSH_RES | 手机→接收端 | `[ok:u8][msg UTF-8]`，ok=1 时 msg 为手机侧保存路径 |
 
 端口：TCP `45556`，UDP `45555`。参考实现见 `app/` 的 `MirrorClient`（约 150 行）与 `protocol/`（纯协议编解码）。
 
@@ -258,8 +310,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.10        # 版本号唯一来源就是 git tag
-git push origin v0.10
+git tag v0.13        # 版本号唯一来源就是 git tag
+git push origin v0.13
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
@@ -285,7 +337,7 @@ CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 G
 - **锁屏 / 熄屏投屏**：MediaProjection 的 AOSP 机制是熄屏即停，锁屏更会被当作安全内容冻结，**没有免 root 的可靠方案**；已提供「防自动息屏」作为最接近的保活手段
 - **文件浏览权限**：Android 11+ 需在发送端页面点「授予文件访问权限」；Android 10 受 scoped storage 限制可能只能访问部分路径
 - **单指针控制**：Quest 控制器激光 / 触摸屏 / 鼠标均按单指针处理，暂不支持双指缩放
-- **安全边界**：配对码只防随手连接，不防同网恶意主动攻击；控制通道零鉴权，仅适用于可信 Wi-Fi
+- **安全边界**：帧体已 AES-256-GCM 加密（ECDH 密钥交换），防局域网被动嗅探；但配对码只防随手连接，不防同网主动中间人，仍仅适用于可信 Wi-Fi
 - **DRM 内容**（Netflix 等）黑屏
 
 * * *

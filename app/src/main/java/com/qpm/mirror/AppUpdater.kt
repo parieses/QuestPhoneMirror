@@ -119,7 +119,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
             }
             DownloadManager.STATUS_FAILED -> {
                 clearDownloadState()
-                listener?.onDownloadFailed("下载失败（${failReason(id)}），请检查网络后重试")
+                listener?.onDownloadFailed(activity.getString(R.string.update_dl_failed, failReason(id)))
             }
             else -> {
                 // 记录被系统清掉（-1）等异常：包还在且版本更新则照常提示，否则清理
@@ -148,19 +148,19 @@ class AppUpdater(private val activity: AppCompatActivity) {
         val dm = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val cursor = dm.query(DownloadManager.Query().setFilterById(id))
         cursor.use {
-            if (!it.moveToFirst()) return "未知错误"
+            if (!it.moveToFirst()) return activity.getString(R.string.update_err_unknown)
             val reason = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
             return when (reason) {
-                DownloadManager.ERROR_CANNOT_RESUME -> "连接中断且无法续传"
-                DownloadManager.ERROR_DEVICE_NOT_FOUND -> "存储不可用"
-                DownloadManager.ERROR_FILE_ALREADY_EXISTS -> "文件已存在"
-                DownloadManager.ERROR_FILE_ERROR -> "本地文件写入错误"
-                DownloadManager.ERROR_HTTP_DATA_ERROR -> "网络数据错误"
-                DownloadManager.ERROR_INSUFFICIENT_SPACE -> "存储空间不足"
-                DownloadManager.ERROR_TOO_MANY_REDIRECTS -> "下载链接重定向过多"
-                DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> "服务器返回异常"
-                DownloadManager.ERROR_UNKNOWN -> "未知错误"
-                else -> "错误码 $reason"
+                DownloadManager.ERROR_CANNOT_RESUME -> activity.getString(R.string.update_err_cannot_resume)
+                DownloadManager.ERROR_DEVICE_NOT_FOUND -> activity.getString(R.string.update_err_device_not_found)
+                DownloadManager.ERROR_FILE_ALREADY_EXISTS -> activity.getString(R.string.update_err_file_exists)
+                DownloadManager.ERROR_FILE_ERROR -> activity.getString(R.string.update_err_file_error)
+                DownloadManager.ERROR_HTTP_DATA_ERROR -> activity.getString(R.string.update_err_http_data)
+                DownloadManager.ERROR_INSUFFICIENT_SPACE -> activity.getString(R.string.update_err_no_space)
+                DownloadManager.ERROR_TOO_MANY_REDIRECTS -> activity.getString(R.string.update_err_too_many_redirects)
+                DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> activity.getString(R.string.update_err_http_code)
+                DownloadManager.ERROR_UNKNOWN -> activity.getString(R.string.update_err_unknown)
+                else -> activity.getString(R.string.update_err_code, reason)
             }
         }
     }
@@ -182,7 +182,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
     fun startDownload(apkUrls: List<String>, versionName: String): Boolean {
         if (isDownloading() || probing) return false
         if (apkUrls.isEmpty()) {
-            listener?.onDownloadFailed("没有可用的下载地址，请前往 GitHub Releases 手动下载")
+            listener?.onDownloadFailed(activity.getString(R.string.update_no_url))
             return false
         }
         probing = true
@@ -223,8 +223,8 @@ class AppUpdater(private val activity: AppCompatActivity) {
         val dm = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val request = try {
             DownloadManager.Request(Uri.parse(apkUrl)).apply {
-                setTitle("QPM 手机镜像 $versionName")
-                setDescription("正在下载更新…")
+                setTitle(activity.getString(R.string.update_dl_title, versionName))
+                setDescription(activity.getString(R.string.update_dl_desc))
                 setDestinationInExternalFilesDir(
                     activity,
                     Environment.DIRECTORY_DOWNLOADS,
@@ -242,7 +242,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
             }
         } catch (e: Exception) {
             Log.w(TAG, "request build failed: ${e.message}")
-            listener?.onDownloadFailed("下载链接无效，请前往 GitHub Releases 手动下载")
+            listener?.onDownloadFailed(activity.getString(R.string.update_bad_url))
             return
         }
 
@@ -250,11 +250,11 @@ class AppUpdater(private val activity: AppCompatActivity) {
             dm.enqueue(request)
         } catch (e: Exception) {
             Log.w(TAG, "enqueue error: ${e.message}")
-            listener?.onDownloadFailed("无法启动下载任务：${e.message}")
+            listener?.onDownloadFailed(activity.getString(R.string.update_enqueue_fail, e.message))
             return
         }
         if (id <= 0) {
-            listener?.onDownloadFailed("无法启动下载任务，请前往 GitHub Releases 手动下载")
+            listener?.onDownloadFailed(activity.getString(R.string.update_enqueue_fail2))
             return
         }
         downloadId = id
@@ -313,7 +313,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
     /** 拉起系统安装器。权限不足时先跳系统设置引导用户放行，包留着下次回来再提示。 */
     fun promptInstall(file: File) {
         if (!hasInstallPermission()) {
-            toast("请先允许「QPM 手机镜像」安装未知应用")
+            toast(activity.getString(R.string.update_install_perm_toast))
             activity.startActivity(installPermissionIntent())
             return
         }
@@ -321,7 +321,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
             FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "fileprovider uri failed: ${e.message}")
-            toast("安装包路径异常，请重新下载")
+            toast(activity.getString(R.string.update_install_path_fail))
             return
         }
         activity.startActivity(

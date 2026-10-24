@@ -16,7 +16,7 @@
     <application
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="QPM 手机镜像"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.QPM">
 
@@ -70,7 +70,7 @@
         <service
             android:name=".QpmControlService"
             android:exported="true"
-            android:label="QPM 控制服务"
+            android:label="@string/a11y_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

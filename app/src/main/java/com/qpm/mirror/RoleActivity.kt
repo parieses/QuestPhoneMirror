@@ -50,7 +50,7 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
                 startPendingDownload()
             } else {
                 pendingDownload = null
-                toast("未允许安装未知应用，暂时无法下载安装更新")
+                toast(getString(R.string.update_install_perm_denied))
             }
         }
 
@@ -63,7 +63,7 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         tvUpdateBadge = findViewById(R.id.tvUpdateBadge)
         updater = AppUpdater(this).also { it.listener = this }
 
-        tvVersion.text = "当前版本 ${BuildConfig.VERSION_NAME} · 点此检查 GitHub 更新"
+        tvVersion.text = getString(R.string.update_version_line, BuildConfig.VERSION_NAME)
 
         findViewById<View>(R.id.cardSender).setOnClickListener {
             startActivity(Intent(this, SenderActivity::class.java))
@@ -106,13 +106,13 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
     private fun checkUpdate(manual: Boolean) {
         if (checking) return
         checking = true
-        if (manual) toast("正在检查 GitHub 更新…")
+        if (manual) toast(getString(R.string.update_checking))
         val current = BuildConfig.VERSION_NAME
         checkExecutor.execute {
             val result = try {
-                UpdateChecker.check(current)
+                UpdateChecker.check(applicationContext, current)
             } catch (e: Exception) {
-                UpdateChecker.Result.Failed("检查更新时出错：${e.message}")
+                UpdateChecker.Result.Failed(getString(R.string.update_failed_check, e.message))
             }
             runOnUiThread {
                 checking = false
@@ -122,7 +122,7 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
 
                     is UpdateChecker.Result.UpToDate -> {
                         tvUpdateBadge.visibility = View.GONE
-                        if (manual) toast("已是最新版本 $current")
+                        if (manual) toast(getString(R.string.update_latest, current))
                     }
 
                     is UpdateChecker.Result.Available -> {
@@ -146,7 +146,7 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         view.findViewById<Button>(R.id.btnDownload).setOnClickListener { onDownloadClicked(release) }
         view.findViewById<Button>(R.id.btnLater).apply {
             // 自动弹窗时可「不再提示此版本」（落 skipped_version 免打扰）；手动检查只能「稍后再说」
-            text = if (auto) "不再提示此版本" else "稍后再说"
+            text = if (auto) getString(R.string.update_btn_later_auto) else getString(R.string.update_btn_later_manual)
             setOnClickListener {
                 if (auto) {
                     checkPrefs.edit().putString(KEY_SKIPPED_VERSION, release.versionName).apply()
@@ -156,7 +156,7 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         }
         view.findViewById<TextView>(R.id.tvGithub).setOnClickListener {
             runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl))) }
-                .onFailure { toast("无法打开浏览器，请手动访问 GitHub Releases") }
+                .onFailure { toast(getString(R.string.update_open_browser_fail)) }
         }
         updateDialog = AlertDialog.Builder(this, R.style.Theme_QPM_Dialog)
             .setView(view)
@@ -166,13 +166,13 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
 
     private fun onDownloadClicked(release: UpdateChecker.Release) {
         if (updater.isDownloading()) {
-            toast("更新正在下载中…")
+            toast(getString(R.string.update_downloading))
             return
         }
         pendingDownload = release
         // 先解决「允许安装未知应用」再下载：等下载完再跳设置，体验是断裂的
         if (!updater.hasInstallPermission()) {
-            toast("请允许「QPM 手机镜像」安装未知应用")
+            toast(getString(R.string.update_install_perm_ask))
             installPermissionLauncher.launch(updater.installPermissionIntent())
             return
         }
@@ -184,7 +184,7 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         pendingDownload = null
         // 传入候选链（Gitee 镜像 / 公共代理 / GitHub 直连），由 AppUpdater 探测选源
         if (!updater.startDownload(release.downloadUrls, release.versionName)) {
-            toast("更新已在下载中")
+            toast(getString(R.string.update_already_downloading))
             return
         }
         updateDialog?.dismiss()
@@ -195,7 +195,7 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         val view = layoutInflater.inflate(R.layout.dialog_update_progress, null)
         progressBar = view.findViewById(R.id.progressBar)
         tvProgress = view.findViewById(R.id.tvProgress)
-        view.findViewById<TextView>(R.id.tvProgressPhase).text = "$versionName · 正在选择最快下载源…"
+        view.findViewById<TextView>(R.id.tvProgressPhase).text = getString(R.string.update_progress_phase, versionName)
         view.findViewById<TextView>(R.id.btnBackground).setOnClickListener { progressDialog?.dismiss() }
         progressDialog = AlertDialog.Builder(this, R.style.Theme_QPM_Dialog)
             .setView(view)
@@ -212,9 +212,9 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
     override fun onProgress(downloaded: Long, total: Long) {
         val text = if (total > 0) {
             val pct = (downloaded * 100 / total).toInt()
-            "已下载 $pct%  ${fmtSize(downloaded)} / ${fmtSize(total)}"
+            getString(R.string.update_progress_pct, pct, fmtSize(downloaded), fmtSize(total))
         } else {
-            "已下载 ${fmtSize(downloaded)}"
+            getString(R.string.update_progress_size, fmtSize(downloaded))
         }
         tvProgress?.text = text
         if (total > 0) progressBar?.progress = (downloaded * 100 / total).toInt()
@@ -225,13 +225,13 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         updateDialog?.dismiss()
         if (!activityResumed) {
             // 用户选了「后台下载」并离开了入口页：不抢跳安装器，回来时再提示
-            toast("更新包 $versionName 已下载完成，回到本页即可安装")
+            toast(getString(R.string.update_ready_toast, versionName))
             return
         }
         if (updater.hasInstallPermission()) {
             updater.promptInstall(file)
         } else {
-            toast("请允许「QPM 手机镜像」安装未知应用后安装 $versionName")
+            toast(getString(R.string.update_install_perm_ask2, versionName))
             startActivity(updater.installPermissionIntent())
             // 从设置页返回时 onResume -> updater.onResume() 会补发安装提示
         }

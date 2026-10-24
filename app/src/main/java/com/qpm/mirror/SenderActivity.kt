@@ -2,6 +2,7 @@ package com.qpm.mirror
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -57,12 +58,12 @@ class SenderActivity : AppCompatActivity() {
     private val projectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode != Activity.RESULT_OK) {
-                toast("录屏权限被拒绝")
+                toast(getString(R.string.sender_projection_denied))
                 return@registerForActivityResult
             }
             pairCode = genPairCode()
             if (swKeepAwake.isChecked && !Settings.System.canWrite(this)) {
-                toast("请允许「修改系统设置」以启用防息屏，现在先开始投屏")
+                toast(getString(R.string.sender_keepawake_ask))
                 startActivity(
                     Intent(
                         Settings.ACTION_MANAGE_WRITE_SETTINGS,
@@ -81,7 +82,7 @@ class SenderActivity : AppCompatActivity() {
                 }
             )
             // 配对码只在 pairCard 展示；tvStatus 不写码，避免两个真源不一致
-            tvStatus.text = "投屏中，等待接收端连接…"
+            tvStatus.text = getString(R.string.sender_status_casting)
             // 服务是异步拉起的，此刻 currentPairCode 可能还没被赋值，
             // 必须用本地已生成的码直接进「投屏中」态，不能走查询式刷新
             showCastingUi(pairCode)
@@ -110,11 +111,11 @@ class SenderActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         btnScanReceivers.setOnClickListener {
-            tvReceiverStatus.text = "正在扫描局域网接收端…"
+            tvReceiverStatus.text = getString(R.string.sender_scanning)
             CastService.discoverReceivers { list ->
                 tvReceiverStatus.text =
-                    if (list.isEmpty()) "未发现接收端（请确认接收端已打开「我是接收端」且在同一 Wi-Fi）"
-                    else "扫描到 ${list.size} 台接收端"
+                    if (list.isEmpty()) getString(R.string.sender_scan_none)
+                    else getString(R.string.sender_scan_found, list.size)
             }
         }
 
@@ -123,7 +124,7 @@ class SenderActivity : AppCompatActivity() {
                 // 投屏中 → 停止（onDestroy 会走 stopAll 清理全部资源）
                 stopService(Intent(this, CastService::class.java))
                 CastService.currentPairCode = null
-                tvStatus.text = "已停止投屏"
+                tvStatus.text = getString(R.string.sender_status_stopped)
                 refreshCastingUi()
             } else {
                 val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -150,6 +151,39 @@ class SenderActivity : AppCompatActivity() {
         refreshAccessibilityStatus()
         refreshFilePermStatus()
         refreshReceivers()
+        // 前台期监听剪贴板：手机复制的内容自动同步给接收端（Android 10+ 后台读不了剪贴板）
+        clipboardManager()?.addPrimaryClipChangedListener(clipListener)
+    }
+
+    override fun onPause() {
+        clipboardManager()?.removePrimaryClipChangedListener(clipListener)
+        super.onPause()
+    }
+
+    private fun clipboardManager(): ClipboardManager? =
+        getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+
+    /**
+     * 剪贴板变化 → 广播 CLIPBOARD 帧给接收端。
+     * 防回环：CastService 写入手机剪贴板（收到接收端同步来的文本）前置了
+     * clipSyncSuppress 标志，这里看到标志就跳过本次变化并清除，避免死循环。
+     */
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
+        if (CastService.clipSyncSuppress) {
+            CastService.clipSyncSuppress = false
+            return@OnPrimaryClipChangedListener
+        }
+        if (CastService.currentPairCode == null) return@OnPrimaryClipChangedListener
+        val text = clipboardManager()
+            ?.primaryClip
+            ?.takeIf { it.itemCount > 0 }
+            ?.getItemAt(0)
+            ?.coerceToText(this)
+            ?.toString()
+            ?.trim()
+        if (!text.isNullOrEmpty()) {
+            CastService.broadcastClipboard(text)
+        }
     }
 
     /** 重新进入页面时恢复显示服务当前使用的配对码。 */
@@ -172,7 +206,7 @@ class SenderActivity : AppCompatActivity() {
             showCastingUi(code)
         } else {
             pairCard.visibility = View.GONE
-            btnStart.text = "开始投屏"
+            btnStart.text = getString(R.string.sender_start)
             tvPairCode.text = "------"
         }
     }
@@ -180,7 +214,7 @@ class SenderActivity : AppCompatActivity() {
     /** 无条件进入「投屏中」UI 态（本地已知配对码时用，不等服务）。 */
     private fun showCastingUi(code: String) {
         pairCard.visibility = View.VISIBLE
-        btnStart.text = "停止投屏"
+        btnStart.text = getString(R.string.sender_stop)
         pairCode = code
         tvPairCode.text = code
     }
@@ -188,7 +222,7 @@ class SenderActivity : AppCompatActivity() {
     /** 文件访问权限状态（接收端「文件」功能前提）。 */
     private fun refreshFilePermStatus() {
         btnFilePerm.text =
-            if (FileRelay.hasStorageAccess(this)) "文件访问：已授权 ✓" else "授予文件访问权限"
+            if (FileRelay.hasStorageAccess(this)) getString(R.string.sender_file_granted) else getString(R.string.sender_file_grant)
     }
 
     /**
@@ -198,11 +232,11 @@ class SenderActivity : AppCompatActivity() {
     private fun refreshReceivers() {
         val list = CastService.receivers()
         if (list.isEmpty()) {
-            tvReceiverStatus.text = "未发现接收端（接收端打开「我是接收端」后可扫描到）"
+            tvReceiverStatus.text = getString(R.string.sender_scan_none2)
             llReceivers.removeAllViews()
             return
         }
-        tvReceiverStatus.text = "发现 ${list.size} 台接收端"
+        tvReceiverStatus.text = getString(R.string.sender_found, list.size)
         llReceivers.removeAllViews()
         val inflater = LayoutInflater.from(this)
         list.forEach { r ->
@@ -213,12 +247,12 @@ class SenderActivity : AppCompatActivity() {
                 append(r.displayName())
                 append("  ")
                 append(r.host)
-                append(if (r.connected) "  · 已连接" else "  · 在线")
+                append(if (r.connected) getString(R.string.sender_item_connected) else getString(R.string.sender_item_online))
             }
             cb.isChecked = CastService.isReceiverAllowed(r.host)
             cb.setOnCheckedChangeListener { _, checked ->
                 CastService.setReceiverAllowed(r.host, checked)
-                toast(if (checked) "已允许 ${r.displayName()} 连接" else "已断开并禁止 ${r.displayName()}")
+                toast(if (checked) getString(R.string.sender_kick_allow, r.displayName()) else getString(R.string.sender_kick_deny, r.displayName()))
             }
             llReceivers.addView(row)
         }
@@ -226,7 +260,7 @@ class SenderActivity : AppCompatActivity() {
 
     private fun requestFileAccess() {
         if (FileRelay.hasStorageAccess(this)) {
-            toast("已授权")
+            toast(getString(R.string.sender_file_granted_toast))
             return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -251,13 +285,13 @@ class SenderActivity : AppCompatActivity() {
             for (intent in candidates) {
                 try {
                     startActivity(intent)
-                    toast("请开启「允许管理所有文件」后返回")
+                    toast(getString(R.string.sender_file_perm_hint))
                     return
                 } catch (e: ActivityNotFoundException) {
                     Log.w(TAG, "file-access intent 不可用: ${intent.action}", e)
                 }
             }
-            toast("无法打开系统设置，请手动在系统设置中为本应用开启文件访问权限")
+            toast(getString(R.string.sender_file_settings_fail))
         } else {
             requestPermissions(
                 arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE),
@@ -274,7 +308,7 @@ class SenderActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_READ_STORAGE) {
             refreshFilePermStatus()
-            if (!FileRelay.hasStorageAccess(this)) toast("未授予存储权限，文件功能不可用")
+            if (!FileRelay.hasStorageAccess(this)) toast(getString(R.string.sender_file_denied))
         }
     }
 

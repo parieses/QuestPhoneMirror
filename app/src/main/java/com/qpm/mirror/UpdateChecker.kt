@@ -1,5 +1,6 @@
 package com.qpm.mirror
 
+import android.content.Context
 import android.util.Log
 import org.json.JSONObject
 import java.io.IOException
@@ -62,17 +63,18 @@ object UpdateChecker {
 
     /**
      * 同步执行网络查询，调用方需放到子线程。
+     * @param context 用于取本地化文案（检查失败原因直接展示给用户）
      * @param currentVersionName 本地版本号（BuildConfig.VERSION_NAME，如 v0.9 / 0.9）
      */
-    fun check(currentVersionName: String): Result {
+    fun check(context: Context, currentVersionName: String): Result {
         val body = try {
-            httpGet(LATEST_RELEASE_URL, currentVersionName)
+            httpGet(context, LATEST_RELEASE_URL, currentVersionName)
         } catch (e: GithubException) {
             // 404（无 Release / 仓库改私有）、403/429（限流）等可读原因
             return Result.Failed(e.userMessage)
         } catch (e: IOException) {
             Log.w(TAG, "network failed: ${e.message}")
-            return Result.Failed("网络不通，检查更新失败（请确认已联网）")
+            return Result.Failed(context.getString(R.string.update_net_fail))
         }
 
         return try {
@@ -82,18 +84,18 @@ object UpdateChecker {
                 return Result.UpToDate
             }
             val tag = json.optString("tag_name")
-                .ifBlank { return Result.Failed("Release 缺少版本号，请前往 GitHub 手动查看") }
+                .ifBlank { return Result.Failed(context.getString(R.string.update_no_tag)) }
             val pageUrl = json.optString("html_url")
                 .ifBlank { "https://github.com/$REPO_OWNER/$REPO_NAME/releases" }
             val apkUrl = pickApkAsset(json.optJSONArray("assets"))
-                ?: return Result.Failed("该 Release 没有附带 APK，请前往 GitHub Releases 页面手动下载")
+                ?: return Result.Failed(context.getString(R.string.update_no_apk))
 
             if (!isNewer(tag, currentVersionName)) return Result.UpToDate
 
             Result.Available(
                 Release(
                     versionName = tag,
-                    notes = truncateNotes(json.optString("body").ifBlank { "（该版本没有填写更新说明）" }),
+                    notes = truncateNotes(context, json.optString("body").ifBlank { context.getString(R.string.update_no_notes) }),
                     apkUrl = apkUrl,
                     pageUrl = pageUrl,
                     downloadUrls = buildDownloadCandidates(apkUrl, tag)
@@ -101,7 +103,7 @@ object UpdateChecker {
             )
         } catch (e: Exception) {
             Log.w(TAG, "parse failed: ${e.message}")
-            Result.Failed("解析 GitHub 返回内容失败，请稍后再试")
+            Result.Failed(context.getString(R.string.update_parse_fail))
         }
     }
 
@@ -169,14 +171,14 @@ object UpdateChecker {
         return anyApk
     }
 
-    private fun truncateNotes(notes: String): String =
-        if (notes.length <= NOTES_MAX_LEN) notes else notes.take(NOTES_MAX_LEN) + "\n…（更多见 GitHub Releases 页面）"
+    private fun truncateNotes(context: Context, notes: String): String =
+        if (notes.length <= NOTES_MAX_LEN) notes else notes.take(NOTES_MAX_LEN) + context.getString(R.string.update_notes_truncated)
 
     /** 带可读原因的 GitHub 接口异常，[userMessage] 直接展示给用户。 */
     private class GithubException(val userMessage: String) : IOException(userMessage)
 
     /** @throws GithubException 404 / 限流等可读原因；@throws IOException 网络层错误 */
-    private fun httpGet(url: String, currentVersion: String): String {
+    private fun httpGet(context: Context, url: String, currentVersion: String): String {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
@@ -190,11 +192,11 @@ object UpdateChecker {
             val code = conn.responseCode
             return when {
                 code == HttpURLConnection.HTTP_NOT_FOUND ->
-                    throw GithubException("仓库还没有发布任何 Release，或仓库已被设为私有")
+                    throw GithubException(context.getString(R.string.update_no_release))
                 code == HttpURLConnection.HTTP_FORBIDDEN || code == 429 ->
-                    throw GithubException("GitHub 接口暂时限流（未认证 60 次/小时），请稍后再试")
+                    throw GithubException(context.getString(R.string.update_ratelimit))
                 code !in 200..299 ->
-                    throw GithubException("GitHub 返回异常（HTTP $code），请稍后再试")
+                    throw GithubException(context.getString(R.string.update_http_error, code))
                 else -> conn.inputStream.bufferedReader().use { it.readText() }
             }
         } finally {

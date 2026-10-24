@@ -13,7 +13,7 @@
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="正在下载更新"
+        android:text="@string/update_progress_title"
         android:textColor="#F1F5F9"
         android:textSize="17sp"
         android:textStyle="bold" />
@@ -44,7 +44,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
         android:gravity="center"
-        android:text="正在选择最快下载源…"
+        android:text="@string/update_progress_picking"
         android:textColor="#F1F5F9"
         android:textSize="13sp" />
 
@@ -55,7 +55,7 @@
         android:layout_marginTop="12dp"
         android:gravity="center"
         android:padding="10dp"
-        android:text="后台下载"
+        android:text="@string/update_progress_background"
         android:textColor="#A5B4FC"
         android:textSize="13sp" />
 </LinearLayout>

@@ -20,7 +20,7 @@
             <ImageView
                 android:layout_width="34dp"
                 android:layout_height="34dp"
-                android:contentDescription="发送端"
+                android:contentDescription="@string/sender_title"
                 android:src="@drawable/ic_cast" />
 
             <LinearLayout
@@ -32,7 +32,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="发送端"
+                    android:text="@string/sender_title"
                     android:textColor="#F1F5F9"
                     android:textSize="19sp"
                     android:textStyle="bold" />
@@ -40,7 +40,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="本机作为被镜像的手机"
+                    android:text="@string/sender_subtitle"
                     android:textColor="#A5B4FC"
                     android:textSize="12sp" />
             </LinearLayout>
@@ -54,7 +54,7 @@
             android:layout_marginTop="16dp"
             android:background="@drawable/bg_card"
             android:padding="14dp"
-            android:text="未开始投屏"
+            android:text="@string/sender_status_idle"
             android:textColor="#E2E8F0"
             android:textSize="15sp"
             android:textStyle="bold" />
@@ -66,7 +66,7 @@
             android:layout_height="54dp"
             android:layout_marginTop="12dp"
             android:background="@drawable/btn_primary"
-            android:text="开始投屏"
+            android:text="@string/sender_start"
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:textStyle="bold" />
@@ -85,7 +85,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="配对码"
+                android:text="@string/sender_pair_title"
                 android:textColor="#64748B"
                 android:textSize="12sp" />
 
@@ -106,7 +106,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:gravity="center"
-                android:text="接收端输入此码后才能看画面并控制"
+                android:text="@string/sender_pair_desc"
                 android:textColor="#A5B4FC"
                 android:textSize="12sp" />
 
@@ -118,7 +118,7 @@
                 android:layout_marginTop="12dp"
                 android:background="@drawable/hint_bg"
                 android:padding="12dp"
-                android:text="控制权限未开启，对方只能看不能操作 · 点此开启"
+                android:text="@string/sender_warn_a11y"
                 android:textColor="#FCD34D"
                 android:textSize="13sp"
                 android:visibility="gone" />
@@ -136,7 +136,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="画质（接收端卡顿时选「流畅」）"
+                android:text="@string/sender_quality_title"
                 android:textColor="#64748B"
                 android:textSize="12sp" />
 
@@ -151,7 +151,7 @@
                     android:id="@+id/rbSmooth"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="流畅 4M"
+                    android:text="@string/sender_q_smooth"
                     android:textColor="#E2E8F0"
                     android:textSize="14sp" />
 
@@ -161,7 +161,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="12dp"
                     android:checked="true"
-                    android:text="均衡 6M"
+                    android:text="@string/sender_q_balanced"
                     android:textColor="#E2E8F0"
                     android:textSize="14sp" />
 
@@ -170,7 +170,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="12dp"
-                    android:text="高清 10M"
+                    android:text="@string/sender_q_high"
                     android:textColor="#E2E8F0"
                     android:textSize="14sp" />
             </RadioGroup>
@@ -197,7 +197,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="投屏期间防止自动息屏"
+                        android:text="@string/sender_keep_awake"
                         android:textColor="#E2E8F0"
                         android:textSize="15sp" />
 
@@ -205,7 +205,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
-                        android:text="录屏在熄屏后会停，开启后投屏期间屏幕不会自动熄灭"
+                        android:text="@string/sender_keep_awake_desc"
                         android:textColor="#A5B4FC"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -232,7 +232,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="连接管理"
+                android:text="@string/sender_conn_mgmt"
                 android:textColor="#F1F5F9"
                 android:textSize="15sp"
                 android:textStyle="bold" />
@@ -241,7 +241,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="投屏中可扫描局域网接收端；取消勾选会立即断开该设备，对方会收到提示"
+                android:text="@string/sender_conn_desc"
                 android:textColor="#A5B4FC"
                 android:textSize="12sp" />
 
@@ -250,7 +250,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="未扫描（接收端打开「我是接收端」后可扫描到）"
+                android:text="@string/sender_conn_not_scanned"
                 android:textColor="#E2E8F0"
                 android:textSize="13sp" />
 
@@ -267,7 +267,7 @@
                 android:layout_height="46dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/btn_secondary"
-                android:text="扫描接收端"
+                android:text="@string/sender_scan"
                 android:textColor="#22D3EE"
                 android:textSize="14sp" />
         </LinearLayout>
@@ -284,7 +284,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="文件共享"
+                android:text="@string/sender_file_share"
                 android:textColor="#F1F5F9"
                 android:textSize="15sp"
                 android:textStyle="bold" />
@@ -293,7 +293,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="接收端点「文件」浏览本机存储所需，仅限共享存储根目录；不授权则文件功能不可用"
+                android:text="@string/sender_file_desc"
                 android:textColor="#A5B4FC"
                 android:textSize="12sp" />
 
@@ -303,7 +303,7 @@
                 android:layout_height="46dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/btn_secondary"
-                android:text="授予文件访问权限"
+                android:text="@string/sender_file_grant"
                 android:textColor="#22D3EE"
                 android:textSize="14sp" />
         </LinearLayout>
@@ -314,7 +314,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:gravity="center"
-            android:text="投屏时请保持本 App 在前台，并在系统设置里允许其后台运行"
+            android:text="@string/sender_keep_foreground"
             android:textColor="#64748B"
             android:textSize="11sp" />
     </LinearLayout>

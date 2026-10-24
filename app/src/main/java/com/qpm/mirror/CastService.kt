@@ -5,6 +5,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
@@ -18,10 +21,13 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import android.view.Display
+import android.view.OrientationEventListener
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.qpm.protocol.Decoders
 import com.qpm.protocol.Discovery
+import com.qpm.protocol.Frame
 import com.qpm.protocol.FrameReader
 import com.qpm.protocol.Proto
 import com.qpm.protocol.Type
@@ -75,6 +81,15 @@ class CastService : Service() {
         /** 当前投屏使用的配对码（服务停止后置空），供 UI 重新进入时恢复显示。 */
         @Volatile
         var currentPairCode: String? = null
+
+        /**
+         * 剪贴板同步防回环标志：
+         * CastService 把接收端同步来的文本写入手机剪贴板前置 true，
+         * SenderActivity 的剪贴板监听器看到 true 时跳过本次变化并清除，
+         * 避免「写入→触发监听→再发回接收端」的无限环。
+         */
+        @Volatile
+        var clipSyncSuppress = false
 
         private val statusListeners = CopyOnWriteArrayList<(String) -> Unit>()
 
@@ -181,18 +196,31 @@ class CastService : Service() {
 
     private var pairCode: String = ""
     private var keepAwake: Boolean = true
+    private var currentBitrate: Int = DEFAULT_BITRATE
     private var prevScreenOffTimeout: Int? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** 投屏统计计数（每秒快照并清零，通过 STATS 帧广播给接收端）。 */
+    private val statFrames = AtomicLong(0)
+    private val statBytes = AtomicLong(0)
+    private val statDropped = AtomicLong(0)
+    private var statsThread: Thread? = null
+
+    /** 当前虚拟显示/编码器尺寸（旋转时对比用，与真实屏幕保持同步）。 */
+    private var videoW: Int = 0
+    private var videoH: Int = 0
+    private var orientationListener: OrientationEventListener? = null
+    private var lastRotationBucket: Int = -1
 
     override fun onCreate() {
         super.onCreate()
         instanceRef = this
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "投屏", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL_ID, getString(R.string.cast_channel_name), NotificationManager.IMPORTANCE_LOW)
         )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("QPM 正在投屏")
+            .setContentTitle(getString(R.string.cast_noti_title))
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setOngoing(true)
             .build()
@@ -224,14 +252,15 @@ class CastService : Service() {
         if (running) return
         running = true
         currentPairCode = pairCode
+        currentBitrate = bitrate
         lastPeerSeen.set(0L)
         // 每次重新开始投屏都重置白名单与 beacon 缓存，避免上一轮的踢人名单残留
         allowedHosts.clear()
         receiverBeacons.clear()
 
-        val metrics = resources.displayMetrics
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
+        val metrics = realMetrics()
+        videoW = metrics.widthPixels
+        videoH = metrics.heightPixels
 
         val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projection = pm.getMediaProjection(code, data)
@@ -249,15 +278,7 @@ class CastService : Service() {
         }, null)
 
         val enc = try {
-            H264Encoder(width, height, bitrate, onFrame = { buf, size, flags, pts ->
-                val frame = Proto.videoFrame(pts, flags, buf, 0, size)
-                clients.forEach { it.offer(frame) }
-            }, onError = { msg ->
-                Log.e(TAG, "编码器错误: $msg")
-                postStatus("编码器错误：$msg，投屏已停止")
-                // 不能在本线程直接调 codec.stop()（MediaCodec 回调内调用会崩溃），切主线程执行
-                mainHandler.post { stopAll() }
-            })
+            newEncoder(videoW, videoH)
         } catch (e: Exception) {
             Log.e(TAG, "编码器初始化失败: ${e.message}")
             postStatus("编码器初始化失败：${e.message ?: "本机不支持 H.264 硬编"}，投屏已停止")
@@ -265,11 +286,12 @@ class CastService : Service() {
             return
         }
         encoder = enc
+        startStatsTicker()
 
         display = projection?.createVirtualDisplay(
             "qpm-cast",
-            width,
-            height,
+            videoW,
+            videoH,
             metrics.densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             enc.inputSurface,
@@ -285,8 +307,128 @@ class CastService : Service() {
         applyKeepAwake()
         postStatus("投屏中，配对码 $pairCode（仅本机在网时接收端可免码直连）")
         Thread { acceptLoop() }.start()
-        broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, width, height) }.apply { start() }
+        broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, videoW, videoH) }.apply { start() }
         peerWatchThread = Thread { peerWatchLoop() }.apply { start() }
+        startRotationWatch()
+    }
+
+    /** 按当前尺寸建编码器：onFrame 把帧塞进全部客户端的发送队列。 */
+    private fun newEncoder(w: Int, h: Int): H264Encoder =
+        H264Encoder(w, h, currentBitrate,         onFrame = { buf, size, flags, pts ->
+            val frame = Proto.videoFrame(pts, flags, buf, 0, size)
+            statFrames.incrementAndGet()
+            statBytes.addAndGet(size.toLong())
+            var accepted = false
+            clients.forEach { if (it.offer(frame)) accepted = true }
+            if (!accepted) statDropped.incrementAndGet()
+        }, onError = { msg ->
+            Log.e(TAG, "编码器错误: $msg")
+            postStatus("编码器错误：$msg，投屏已停止")
+            // 不能在本线程直接调 codec.stop()（MediaCodec 回调内调用会崩溃），切主线程执行
+            mainHandler.post { stopAll() }
+        })
+
+    /**
+     * 屏幕旋转监听：横竖屏切换后 VirtualDisplay/编码器尺寸与真实屏幕不符
+     * （AUTO_MIRROR 只镜像内容不缩放，尺寸不变画面会被压扁/裁剪），
+     * 按新尺寸重建显示与编码器，并重发 SCREEN_INFO 让接收端重排画面与触摸映射。
+     * 用 90° 分桶做防抖：小角度抖动不触发重建。
+     */
+    private fun startRotationWatch() {
+        lastRotationBucket = -1
+        orientationListener = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (!running || orientation == ORIENTATION_UNKNOWN) return
+                val bucket = ((orientation + 45) / 90) % 4
+                if (bucket == lastRotationBucket) return
+                lastRotationBucket = bucket
+                mainHandler.post { reconfigureForRotation() }
+            }
+        }.also { if (it.canDetectOrientation()) it.enable() }
+    }
+
+    private fun stopRotationWatch() {
+        orientationListener?.disable()
+        orientationListener = null
+    }
+
+    /** 旋转后按新屏幕尺寸重建 VirtualDisplay + 编码器，并广播新的 SCREEN_INFO。 */
+    private fun reconfigureForRotation() {
+        if (!running) return
+        val m = realMetrics()
+        val w = m.widthPixels
+        val h = m.heightPixels
+        if (w == videoW && h == videoH) return
+        Log.i(TAG, "屏幕旋转：${videoW}x$videoH -> ${w}x$h，重建虚拟显示与编码器")
+        postStatus("屏幕方向变化，正在按新尺寸调整画面…")
+        // 先停旧显示与编码器（顺序：显示不再喂帧 -> 编码器收尾），再按新尺寸重建
+        runCatching { display?.release() }
+        display = null
+        runCatching { encoder?.stop() }
+        encoder = null
+        val enc = try {
+            newEncoder(w, h)
+        } catch (e: Exception) {
+            Log.e(TAG, "旋转后编码器初始化失败: ${e.message}")
+            postStatus("编码器初始化失败：${e.message ?: "本机不支持 H.264 硬编"}，投屏已停止")
+            stopAll()
+            return
+        }
+        encoder = enc
+        videoW = w
+        videoH = h
+        display = projection?.createVirtualDisplay(
+            "qpm-cast",
+            w,
+            h,
+            m.densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            enc.inputSurface,
+            null,
+            null
+        )
+        if (display == null) {
+            postStatus("虚拟显示创建失败，投屏已停止")
+            stopAll()
+            return
+        }
+        // 接收端靠 SCREEN_INFO 重排 SurfaceView 宽高比与触摸映射，必须重发
+        clients.forEach { it.sendReliable(Proto.screenInfo(w, h, m.densityDpi)) }
+        // beacon 里带着屏幕尺寸，换块线程重新广播
+        broadcastThread?.interrupt()
+        broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, w, h) }.apply { start() }
+    }
+
+    /** 真实屏幕尺寸（随旋转实时更新；resources.displayMetrics 有配置更新延迟，不用）。 */
+    private fun realMetrics(): android.util.DisplayMetrics {
+        val m = android.util.DisplayMetrics()
+        val disp = getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+        @Suppress("DEPRECATION")
+        disp.getRealMetrics(m)
+        return m
+    }
+
+    /** 每秒快照编码统计并通过 STATS 帧广播给全部已配对接收端。 */
+    private fun startStatsTicker() {
+        if (statsThread?.isAlive == true) return
+        statsThread = Thread {
+            while (running && !Thread.currentThread().isInterrupted) {
+                try {
+                    Thread.sleep(1000)
+                } catch (_: InterruptedException) {
+                    break
+                }
+                val frames = statFrames.getAndSet(0)
+                val bytes = statBytes.getAndSet(0)
+                val dropped = statDropped.getAndSet(0)
+                val bitrate = (bytes * 8).toInt() // bits per second
+                val m = realMetrics()
+                val stats = Proto.stats(
+                    frames.toInt(), bitrate, m.widthPixels, m.heightPixels, dropped.toInt()
+                )
+                clients.forEach { if (it.paired) it.sendReliable(stats) }
+            }
+        }.apply { start() }
     }
 
     /** 监听是否有其他 QPM 发送端/接收端在网：前者决定免密直连，后者供连接管理列表。 */
@@ -297,14 +439,30 @@ class CastService : Service() {
                 if (it.name.isNotBlank()) receiverBeacons[it.host] = it.name
             }
             if (receivers.isNotEmpty()) notifyReceiversChanged()
-            if (peers.isNotEmpty()) {
+            // 排除本机自身 beacon（部分设备 UDP 广播会回环），否则会误判「有其他发送端」而永久关闭免密直连
+            val others = peers.filter { !isLocalAddress(it.host) }
+            if (others.isNotEmpty()) {
                 if (lastPeerSeen.get() == 0L) {
-                    Log.i(TAG, "检测到 ${peers.size} 个其他发送端在网，免密直连已关闭")
+                    Log.i(TAG, "检测到 ${others.size} 个其他发送端在网，免密直连已关闭")
                     postStatus("检测到局域网内有其他 QPM 发送端，接收端需输入配对码")
                 }
                 lastPeerSeen.set(System.currentTimeMillis())
             }
         }
+    }
+
+    /** 判断 host 是否为本机某个网络接口的 IP（含回环）。用于 peerWatch 排除自身 beacon。 */
+    private fun isLocalAddress(host: String): Boolean {
+        if (host == "127.0.0.1" || host == "::1" || host == "localhost") return true
+        return runCatching {
+            val localhosts = java.util.HashSet<String>()
+            val enums = java.net.NetworkInterface.getNetworkInterfaces()
+            for (nif in enums) {
+                val addrs = nif.inetAddresses
+                for (a in addrs) localhosts.add(a.hostAddress)
+            }
+            localhosts.contains(host)
+        }.getOrDefault(false)
     }
 
     private fun acceptLoop() {
@@ -313,13 +471,8 @@ class CastService : Service() {
             while (running) {
                 val socket = server!!.accept().apply { tcpNoDelay = true }
                 val client = Client(socket, onPaired = { c ->
-                    c.offer(
-                        Proto.screenInfo(
-                            resources.displayMetrics.widthPixels,
-                            resources.displayMetrics.heightPixels,
-                            resources.displayMetrics.densityDpi
-                        )
-                    )
+                    val m = realMetrics()
+                    c.offer(Proto.screenInfo(m.widthPixels, m.heightPixels, m.densityDpi))
                     encoder?.requestKeyFrame()
                     postStatus("接收端 ${c.displayName()} 已配对并开始接收画面")
                     notifyReceiversChanged()
@@ -363,6 +516,9 @@ class CastService : Service() {
         running = false
         currentPairCode = null
         lastPeerSeen.set(0L)
+        stopRotationWatch()
+        statsThread?.interrupt()
+        statsThread = null
         clients.forEach { it.close() }
         clients.clear()
         broadcastThread?.interrupt()
@@ -399,6 +555,28 @@ class CastService : Service() {
         clients.filter { it.hostAddress == host }.forEach { it.close() }
     }
 
+    /**
+     * 接收端同步剪贴板文本过来：写入手机剪贴板 + 置防回环标志。
+     * 前台 Activity 的剪贴板监听器会因此被触发，靠 clipSyncSuppress 跳过。
+     */
+    private fun handleClipboardSync(text: String) {
+        if (text.isEmpty()) return
+        mainHandler.post {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipSyncSuppress = true
+            runCatching { cm.setPrimaryClip(ClipData.newPlainText("QPM", text)) }
+                .onFailure { Log.w(TAG, "写手机剪贴板失败: ${it.message}") }
+            postStatus(getString(R.string.cast_clip_copied))
+        }
+    }
+
+    /** 把剪贴板文本广播给全部已配对接收端（SenderActivity 监听复制变化时调用）。 */
+    fun broadcastClipboard(text: String) {
+        if (text.isEmpty()) return
+        val frame = Proto.clipboard(text)
+        clients.forEach { it.sendReliable(frame) }
+    }
+
     /** 单个接收端连接：配对通过前视频/控制/文件全部门控。 */
     private inner class Client(
         private val socket: Socket,
@@ -408,6 +586,9 @@ class CastService : Service() {
         private val queue = LinkedBlockingQueue<ByteArray>(QUEUE_DEPTH)
         private val writeLock = Any()
         @Volatile private var closed = false
+
+        /** 加密通道：本端为发送端，发出方向为 DIR_PHONE。握手前/失败回落时自动透传。 */
+        private val channel = SecureChannel(Crypto.DIR_PHONE)
 
         /** 配对通过后才允许收视频/发控制/文件。 */
         @Volatile
@@ -427,23 +608,29 @@ class CastService : Service() {
         private var pairFails = 0
         private var lastA11yNullLog = 0L
 
+        /** 文件推送：当前正在接收写入的输出流与目标文件（每次 REQ 重置）。 */
+        private var pushOs: java.io.OutputStream? = null
+        private var pushTarget: File? = null
+
         private val writer = Thread { writeLoop() }.apply { start() }
         private val reader = Thread { readLoop() }.apply { start() }
 
-        /** 队列满则丢最旧的帧，优先保延迟；未配对时直接丢弃。 */
-        fun offer(frame: ByteArray) {
-            if (closed || !paired) return
-            if (!queue.offer(frame)) {
+        /** 队列满则丢最旧的帧，优先保延迟；未配对时直接丢弃。返回是否成功入队（用于统计丢帧）。 */
+        fun offer(frame: ByteArray): Boolean {
+            if (closed || !paired) return false
+            return if (queue.offer(frame)) {
+                true
+            } else {
                 queue.poll()
                 queue.offer(frame)
             }
         }
 
-        /** 可靠发送：控制结果/文件数据必须到达，走写锁直接写 socket。 */
+        /** 可靠发送：控制结果/文件数据必须到达，武装后自动 AES-GCM 封装帧体。 */
         fun sendReliable(bytes: ByteArray) {
             if (closed) return
             try {
-                synchronized(writeLock) { socket.getOutputStream().write(bytes) }
+                synchronized(writeLock) { socket.getOutputStream().write(channel.seal(bytes)) }
             } catch (e: Exception) {
                 Log.w(TAG, "sendReliable 失败: ${e.message}")
                 close()
@@ -456,7 +643,7 @@ class CastService : Service() {
                 while (!closed) {
                     // 用 poll 而非 take：close() 后若队列已空，take() 会永久挂起导致线程泄漏
                     val frame = queue.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
-                    synchronized(writeLock) { out.write(frame) }
+                    synchronized(writeLock) { out.write(channel.seal(frame)) }
                 }
             } catch (_: Exception) {
                 close()
@@ -466,9 +653,35 @@ class CastService : Service() {
         private fun readLoop() {
             try {
                 val reader = FrameReader(socket.getInputStream())
+                // 首帧来自接收端：期望 KEY_EXCHANGE；否则回落明文（兼容旧版接收端）。
+                // 先发本方 KE（明文），再武装——保证 KEY_EXCHANGE 帧永不被加密。
+                var pending: Frame? = null
+                val first = reader.read() ?: return
+                if (first.type == Type.KEY_EXCHANGE) {
+                    val kp = runCatching { Crypto.newKeyPair() }.getOrNull()
+                    val session = if (kp != null) runCatching { Crypto.deriveSessionKey(kp, first.body) }.getOrNull() else null
+                    if (kp != null && session != null) {
+                        // 先发本方 KE（明文），再武装——保证 KEY_EXCHANGE 帧永不被加密
+                        synchronized(writeLock) {
+                            socket.getOutputStream().write(Proto.keyExchange(kp.publicEncoded))
+                        }
+                        channel.arm(session)
+                        Log.i(TAG, "加密通道已建立（AES-256-GCM）")
+                    } else {
+                        // 密钥交换失败：降级明文，不回发 KE，让对端超时后回落（不会互等死锁）
+                        Log.w(TAG, "密钥派生失败，回退明文通道")
+                        pending = null
+                    }
+                } else {
+                    Log.w(TAG, "对端不支持加密，回退明文通道")
+                    pending = first
+                }
                 while (!closed) {
-                    val frame = reader.read() ?: break
+                    val raw = pending ?: (reader.read() ?: break)
+                    pending = null
+                    val frame = channel.open(raw)
                     when (frame.type) {
+                        Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
                         Type.HELLO -> {
                             receiverName = Decoders.textOf(frame)
                             receiverBeacons[hostAddress ?: ""] = receiverName
@@ -498,6 +711,14 @@ class CastService : Service() {
 
                         Type.FILE_LIST_REQ -> if (paired) handleFileList(Decoders.pathOf(frame))
                         Type.FILE_GET_REQ -> if (paired) handleFileGet(Decoders.pathOf(frame))
+                        Type.FILE_PUSH_REQ -> if (paired) {
+                            val (total, path) = Decoders.filePushReqOf(frame)
+                            handleFilePushReq(total, path)
+                        }
+                        Type.FILE_PUSH_DATA -> if (paired) handleFilePushData(Decoders.filePushDataOf(frame))
+
+                        // 剪贴板同步：接收端 -> 手机（写入手机剪贴板）
+                        Type.CLIPBOARD -> if (paired) handleClipboardSync(Decoders.clipboardOf(frame))
                     }
                 }
             } catch (e: Exception) {
@@ -588,6 +809,50 @@ class CastService : Service() {
             }
         }
 
+        // ---------- 文件推送（接收端 -> 本机存储） ----------
+
+        private fun handleFilePushReq(total: Long, path: String) {
+            runCatching { pushOs?.close() }
+            pushOs = null
+            pushTarget = null
+            val target = FileRelay.resolveWritable(this@CastService, path)
+            if (target == null) {
+                sendReliable(Proto.filePushRes(false, "路径不可写或未授权：$path"))
+                return
+            }
+            try {
+                pushTarget = target
+                pushOs = java.io.FileOutputStream(target)
+                Log.i(TAG, "接收端推送文件到：${target.absolutePath}（共 $total 字节）")
+            } catch (e: Exception) {
+                pushOs = null
+                pushTarget = null
+                Log.e(TAG, "创建推送文件失败: $path - ${e.message}")
+                sendReliable(Proto.filePushRes(false, "无法创建文件：${e.message}"))
+            }
+        }
+
+        private fun handleFilePushData(chunk: FilePushChunk) {
+            val os = pushOs ?: return // 没有进行中的推送请求，忽略
+            try {
+                os.write(chunk.chunk)
+                if (chunk.eof) {
+                    runCatching { os.close() }
+                    pushOs = null
+                    val path = pushTarget?.absolutePath ?: ""
+                    pushTarget = null
+                    Log.i(TAG, "接收端推送文件接收完成：$path")
+                    sendReliable(Proto.filePushRes(true, path))
+                }
+            } catch (e: Exception) {
+                runCatching { os.close() }
+                pushOs = null
+                pushTarget = null
+                Log.e(TAG, "写入推送文件失败: ${e.message}")
+                sendReliable(Proto.filePushRes(false, "写入失败：${e.message}"))
+            }
+        }
+
         /** 控制帧统一出口：无障碍服务未就绪时限流打印，避免接收端高频触摸刷爆日志。 */
         private inline fun dispatchControl(action: (QpmControlService) -> Unit) {
             val control = QpmControlService.instance
@@ -607,6 +872,7 @@ class CastService : Service() {
         fun close() {
             if (closed) return
             closed = true
+            runCatching { pushOs?.close() }
             runCatching { socket.close() }
             onClose(this)
         }
@@ -656,6 +922,26 @@ internal object FileRelay {
         if (!f.isFile) return null
         val cp = f.canonicalPath
         return if (allowedRoots().any { cp == it || cp.startsWith("$it/") }) f else null
+    }
+
+    /**
+     * 文件推送写入目标：把接收端给的路径解析成本机共享存储内的可写文件。
+     * - 路径落在根目录内且父目录可建 -> 直接用；
+     * - 否则退化为「根目录 + 原文件名」，避免越权写出到系统目录。
+     */
+    fun resolveWritable(ctx: android.content.Context, path: String): File? {
+        if (!hasStorageAccess(ctx)) return null
+        val name = path.substringAfterLast('/').ifBlank { "qpm_push.bin" }
+        val rooted = runCatching {
+            val f = File(path).canonicalFile
+            val cp = f.canonicalPath
+            if (allowedRoots().any { cp == it || cp.startsWith("$it/") }) f else null
+        }.getOrNull()
+        val target = rooted ?: File(Environment.getExternalStorageDirectory(), name)
+        return runCatching {
+            target.parentFile?.mkdirs()
+            target
+        }.getOrNull()
     }
 
     /** 返回条目行：name\tisDir\tsize\tmtime；目录在前按名排序。 */

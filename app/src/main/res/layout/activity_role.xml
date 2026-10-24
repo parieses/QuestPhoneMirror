@@ -10,7 +10,7 @@
     <ImageView
         android:layout_width="96dp"
         android:layout_height="96dp"
-        android:contentDescription="QPM 图标"
+        android:contentDescription="@string/role_icon_desc"
         android:src="@mipmap/ic_launcher" />
 
     <TextView
@@ -18,7 +18,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
         android:gravity="center"
-        android:text="QPM 手机镜像"
+        android:text="@string/role_app_name"
         android:textColor="#F1F5F9"
         android:textSize="26sp"
         android:textStyle="bold" />
@@ -28,7 +28,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:gravity="center"
-        android:text="两台设备装同一份 App，各选一边角色（手机、Quest、平板均可）"
+        android:text="@string/role_subtitle"
         android:textColor="#A5B4FC"
         android:textSize="13sp" />
 
@@ -48,7 +48,7 @@
         <ImageView
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:contentDescription="发送端"
+            android:contentDescription="@string/sender_title"
             android:src="@drawable/ic_cast" />
 
         <LinearLayout
@@ -60,7 +60,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="我是发送端"
+                android:text="@string/role_sender"
                 android:textColor="#F1F5F9"
                 android:textSize="18sp"
                 android:textStyle="bold" />
@@ -69,7 +69,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="手机选这个：录屏并推流到接收端"
+                android:text="@string/role_sender_desc"
                 android:textColor="#A5B4FC"
                 android:textSize="13sp" />
         </LinearLayout>
@@ -91,7 +91,7 @@
         <ImageView
             android:layout_width="40dp"
             android:layout_height="40dp"
-            android:contentDescription="接收端"
+            android:contentDescription="@string/receiver_title"
             android:src="@drawable/ic_headset" />
 
         <LinearLayout
@@ -103,7 +103,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="我是接收端"
+                android:text="@string/role_receiver"
                 android:textColor="#F1F5F9"
                 android:textSize="18sp"
                 android:textStyle="bold" />
@@ -112,7 +112,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="接收端选这个：自动搜索并显示发送端画面"
+                android:text="@string/role_receiver_desc"
                 android:textColor="#A5B4FC"
                 android:textSize="13sp" />
         </LinearLayout>
@@ -123,7 +123,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="28dp"
         android:gravity="center"
-        android:text="两台设备需连接同一 Wi-Fi 局域网"
+        android:text="@string/role_lan_hint"
         android:textColor="#64748B"
         android:textSize="12sp" />
 
@@ -144,7 +144,7 @@
         <ImageView
             android:layout_width="26dp"
             android:layout_height="26dp"
-            android:contentDescription="检查更新"
+            android:contentDescription="@string/role_update_check"
             android:src="@drawable/ic_info" />
 
         <LinearLayout
@@ -157,7 +157,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="检查更新"
+                android:text="@string/role_update_check"
                 android:textColor="#F1F5F9"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -167,7 +167,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="当前版本"
+                android:text="@string/role_version_current"
                 android:textColor="#A5B4FC"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -193,7 +193,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
         android:gravity="center"
-        android:text="更新检测来自 GitHub Releases（未认证接口限流 60 次/小时，自动检测每 12 小时一次）"
+        android:text="@string/role_update_source"
         android:textColor="#475569"
         android:textSize="11sp" />
 </LinearLayout>

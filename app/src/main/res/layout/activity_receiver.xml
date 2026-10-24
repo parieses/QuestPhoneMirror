@@ -31,7 +31,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:background="@null"
-            android:hint="发送端 IP（同机测试填 127.0.0.1）"
+            android:hint="@string/receiver_ip_hint"
             android:inputType="textUri"
             android:maxLines="1"
             android:textColor="#FFFFFFFF"
@@ -47,8 +47,21 @@
             android:minWidth="0dp"
             android:paddingLeft="16dp"
             android:paddingRight="16dp"
-            android:text="连接"
+            android:text="@string/receiver_connect"
             android:textColor="#FFFFFFFF"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnRefresh"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="8dp"
+            android:background="@drawable/btn_secondary"
+            android:minWidth="0dp"
+            android:paddingLeft="16dp"
+            android:paddingRight="16dp"
+            android:text="@string/receiver_refresh"
+            android:textColor="#22D3EE"
             android:textSize="14sp" />
     </LinearLayout>
 
@@ -70,7 +83,7 @@
             android:id="@+id/tvStage"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="正在搜索发送端…"
+            android:text="@string/receiver_searching"
             android:textColor="#F1F5F9"
             android:textSize="20sp"
             android:textStyle="bold" />
@@ -81,7 +94,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:gravity="center_horizontal"
-            android:text="请先在手机上打开「我是发送端」并点开始投屏\n两端需连接同一个 Wi-Fi"
+            android:text="@string/receiver_search_hint"
             android:textColor="#A5B4FC"
             android:textSize="13sp" />
 
@@ -92,7 +105,7 @@
             android:layout_marginTop="18dp"
             android:background="@null"
             android:gravity="center"
-            android:hint="输入 6 位配对码"
+            android:hint="@string/receiver_pair_hint"
             android:inputType="number"
             android:letterSpacing="0.3"
             android:maxLength="6"
@@ -112,7 +125,7 @@
             android:minWidth="0dp"
             android:paddingLeft="28dp"
             android:paddingRight="28dp"
-            android:text="配 对"
+            android:text="@string/receiver_pair"
             android:textColor="#22D3EE"
             android:textSize="16sp"
             android:visibility="gone" />
@@ -134,6 +147,22 @@
         android:textColor="#FFFFFFFF"
         android:textSize="14sp" />
 
+    <!-- 剪贴板入口：输入/粘贴文本发送到手机剪贴板（Quest 等无输入法设备的刚需） -->
+    <Button
+        android:id="@+id/btnClipboard"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="76dp"
+        android:background="@drawable/btn_secondary"
+        android:minWidth="0dp"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:text="@string/receiver_clipboard"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp" />
+
     <!-- 文件浏览入口：浏览/下载发送端文件 -->
     <Button
         android:id="@+id/btnFiles"
@@ -145,7 +174,55 @@
         android:minWidth="0dp"
         android:paddingLeft="16dp"
         android:paddingRight="16dp"
-        android:text="📁 文件"
+        android:text="@string/receiver_files"
         android:textColor="#FFFFFFFF"
         android:textSize="14sp" />
+
+    <!-- 文件推送入口：选本机文件推送到发送端存储 -->
+    <Button
+        android:id="@+id/btnPush"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="136dp"
+        android:background="@drawable/btn_secondary"
+        android:minWidth="0dp"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:text="@string/receiver_push"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp" />
+
+    <!-- 统计开关：开启后右上角显示投屏统计浮窗 -->
+    <Button
+        android:id="@+id/btnStats"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:background="@drawable/btn_secondary"
+        android:minWidth="0dp"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:text="@string/receiver_stats"
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp" />
+
+    <!-- 投屏统计浮窗：半透明，默认隐藏 -->
+    <TextView
+        android:id="@+id/statsView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:background="#CC0B0A1F"
+        android:paddingLeft="12dp"
+        android:paddingRight="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:textColor="#22D3EE"
+        android:textSize="13sp"
+        android:visibility="gone" />
 </FrameLayout>

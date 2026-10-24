@@ -1,5 +1,199 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  中文（默认）。values-en/strings.xml 为英文翻译，两套 key 必须一致。
+  边界：UI 静态/流程引导文案本地化；Log 与运行态诊断信息（编码器错误、内部异常等）保持原文。
+-->
 <resources>
+
     <string name="app_name">QPM 手机镜像</string>
     <string name="accessibility_desc">允许 QPM 在接收端模拟点击、滑动与文字输入来操作本机</string>
+    <string name="a11y_service_label">QPM 控制服务</string>
+
+    <!-- ========== 入口页 RoleActivity ========== -->
+    <string name="role_app_name">QPM 手机镜像</string>
+    <string name="role_icon_desc">QPM 图标</string>
+    <string name="role_subtitle">两台设备装同一份 App，各选一边角色（手机、Quest、平板均可）</string>
+    <string name="role_sender">我是发送端</string>
+    <string name="role_sender_desc">手机选这个：录屏并推流到接收端</string>
+    <string name="role_receiver">我是接收端</string>
+    <string name="role_receiver_desc">接收端选这个：自动搜索并显示发送端画面</string>
+    <string name="role_lan_hint">两台设备需连接同一 Wi-Fi 局域网</string>
+    <string name="role_update_check">检查更新</string>
+    <string name="role_update_source">更新检测来自 GitHub Releases（未认证接口限流 60 次/小时，自动检测每 12 小时一次）</string>
+    <string name="role_version_current">当前版本</string>
+
+    <!-- ========== 更新：检查/对话框/下载 ========== -->
+    <string name="update_version_line">当前版本 %1$s · 点此检查 GitHub 更新</string>
+    <string name="update_checking">正在检查 GitHub 更新…</string>
+    <string name="update_latest">已是最新版本 %1$s</string>
+    <string name="update_failed_check">检查更新时出错：%1$s</string>
+    <string name="update_install_perm_denied">未允许安装未知应用，暂时无法下载安装更新</string>
+    <string name="update_downloading">更新正在下载中…</string>
+    <string name="update_install_perm_ask">请允许「QPM 手机镜像」安装未知应用</string>
+    <string name="update_already_downloading">更新已在下载中</string>
+    <string name="update_ready_toast">更新包 %1$s 已下载完成，回到本页即可安装</string>
+    <string name="update_install_perm_ask2">请允许「QPM 手机镜像」安装未知应用后安装 %1$s</string>
+    <string name="update_progress_pct">已下载 %1$d%%  %2$s / %3$s</string>
+    <string name="update_progress_size">已下载 %1$s</string>
+    <string name="update_open_browser_fail">无法打开浏览器，请手动访问 GitHub Releases</string>
+    <string name="update_btn_later_auto">不再提示此版本</string>
+    <string name="update_btn_later_manual">稍后再说</string>
+
+    <string name="update_avail_title">发现新版本</string>
+    <string name="update_avail_subtitle">QPM 手机镜像 可更新至以下版本</string>
+    <string name="update_avail_notes">更新内容</string>
+    <string name="update_avail_download">下载并安装</string>
+    <string name="update_avail_github">去 GitHub 查看完整 Release</string>
+
+    <string name="update_progress_title">正在下载更新</string>
+    <string name="update_progress_phase">%1$s · 正在选择最快下载源…</string>
+    <string name="update_progress_picking">正在选择最快下载源…</string>
+    <string name="update_progress_background">后台下载</string>
+
+    <string name="update_dl_failed">下载失败（%1$s），请检查网络后重试</string>
+    <string name="update_err_cannot_resume">连接中断且无法续传</string>
+    <string name="update_err_device_not_found">存储不可用</string>
+    <string name="update_err_file_exists">文件已存在</string>
+    <string name="update_err_file_error">本地文件写入错误</string>
+    <string name="update_err_http_data">网络数据错误</string>
+    <string name="update_err_no_space">存储空间不足</string>
+    <string name="update_err_too_many_redirects">下载链接重定向过多</string>
+    <string name="update_err_http_code">服务器返回异常</string>
+    <string name="update_err_unknown">未知错误</string>
+    <string name="update_err_code">错误码 %1$d</string>
+    <string name="update_no_url">没有可用的下载地址，请前往 GitHub Releases 手动下载</string>
+    <string name="update_dl_title">QPM 手机镜像 %1$s</string>
+    <string name="update_dl_desc">正在下载更新…</string>
+    <string name="update_bad_url">下载链接无效，请前往 GitHub Releases 手动下载</string>
+    <string name="update_enqueue_fail">无法启动下载任务：%1$s</string>
+    <string name="update_enqueue_fail2">无法启动下载任务，请前往 GitHub Releases 手动下载</string>
+    <string name="update_install_perm_toast">请先允许「QPM 手机镜像」安装未知应用</string>
+    <string name="update_install_path_fail">安装包路径异常，请重新下载</string>
+    <string name="update_net_fail">网络不通，检查更新失败（请确认已联网）</string>
+    <string name="update_no_tag">Release 缺少版本号，请前往 GitHub 手动查看</string>
+    <string name="update_no_apk">该 Release 没有附带 APK，请前往 GitHub Releases 页面手动下载</string>
+    <string name="update_no_notes">（该版本没有填写更新说明）</string>
+    <string name="update_notes_truncated">\n…（更多见 GitHub Releases）</string>
+    <string name="update_no_release">仓库还没有发布任何 Release，或仓库已被设为私有</string>
+    <string name="update_ratelimit">GitHub 接口暂时限流（未认证 60 次/小时），请稍后再试</string>
+    <string name="update_http_error">GitHub 返回异常（HTTP %1$d），请稍后再试</string>
+    <string name="update_parse_fail">解析 GitHub 返回内容失败，请稍后再试</string>
+
+    <!-- ========== 发送端 SenderActivity ========== -->
+    <string name="sender_title">发送端</string>
+    <string name="sender_subtitle">本机作为被镜像的手机</string>
+    <string name="sender_status_idle">未开始投屏</string>
+    <string name="sender_start">开始投屏</string>
+    <string name="sender_stop">停止投屏</string>
+    <string name="sender_status_casting">投屏中，等待接收端连接…</string>
+    <string name="sender_status_stopped">已停止投屏</string>
+    <string name="sender_pair_title">配对码</string>
+    <string name="sender_pair_desc">接收端输入此码后才能看画面并控制</string>
+    <string name="sender_warn_a11y">控制权限未开启，对方只能看不能操作 · 点此开启</string>
+    <string name="sender_quality_title">画质（接收端卡顿时选「流畅」）</string>
+    <string name="sender_q_smooth">流畅 4M</string>
+    <string name="sender_q_balanced">均衡 6M</string>
+    <string name="sender_q_high">高清 10M</string>
+    <string name="sender_keep_awake">投屏期间防止自动息屏</string>
+    <string name="sender_keep_awake_desc">录屏在熄屏后会停，开启后投屏期间屏幕不会自动熄灭</string>
+    <string name="sender_conn_mgmt">连接管理</string>
+    <string name="sender_conn_desc">投屏中可扫描局域网接收端；取消勾选会立即断开该设备，对方会收到提示</string>
+    <string name="sender_conn_not_scanned">未扫描（接收端打开「我是接收端」后可扫描到）</string>
+    <string name="sender_scan">扫描接收端</string>
+    <string name="sender_scanning">正在扫描局域网接收端…</string>
+    <string name="sender_scan_none">未发现接收端（请确认接收端已打开「我是接收端」且在同一 Wi-Fi）</string>
+    <string name="sender_scan_none2">未发现接收端（接收端打开「我是接收端」后可扫描到）</string>
+    <string name="sender_scan_found">扫描到 %1$d 台接收端</string>
+    <string name="sender_found">发现 %1$d 台接收端</string>
+    <string name="sender_item_connected">  · 已连接</string>
+    <string name="sender_item_online">  · 在线</string>
+    <string name="sender_kick_allow">已允许 %1$s 连接</string>
+    <string name="sender_kick_deny">已断开并禁止 %1$s</string>
+    <string name="sender_file_share">文件共享</string>
+    <string name="sender_file_desc">接收端点「文件」浏览本机存储所需，仅限共享存储根目录；不授权则文件功能不可用</string>
+    <string name="sender_file_grant">授予文件访问权限</string>
+    <string name="sender_file_granted">文件访问：已授权 ✓</string>
+    <string name="sender_file_granted_toast">已授权</string>
+    <string name="sender_file_denied">未授予存储权限，文件功能不可用</string>
+    <string name="sender_file_perm_hint">请开启「允许管理所有文件」后返回</string>
+    <string name="sender_file_settings_fail">无法打开系统设置，请手动在系统设置中为本应用开启文件访问权限</string>
+    <string name="sender_keepawake_ask">请允许「修改系统设置」以启用防息屏，现在先开始投屏</string>
+    <string name="sender_projection_denied">录屏权限被拒绝</string>
+    <string name="sender_keep_foreground">投屏时请保持本 App 在前台，并在系统设置里允许其后台运行</string>
+
+    <!-- ========== 接收端 ReceiverActivity ========== -->
+    <string name="receiver_title">接收端</string>
+    <string name="receiver_ip_hint">发送端 IP（同机测试填 127.0.0.1）</string>
+    <string name="receiver_connect">连接</string>
+    <string name="receiver_searching">正在搜索发送端…</string>
+    <string name="receiver_search_hint">请先在手机上打开「我是发送端」并点开始投屏\n两端需连接同一个 Wi-Fi</string>
+    <string name="receiver_pair_hint">输入 6 位配对码</string>
+    <string name="receiver_pair">配 对</string>
+    <string name="receiver_files">📁 文件</string>
+    <string name="receiver_clipboard">📋 剪贴板</string>
+    <string name="receiver_surface_not_ready">画面尚未就绪，稍候再试</string>
+    <string name="receiver_pair_empty">请输入发送端显示的配对码</string>
+    <string name="receiver_pairing">正在配对…</string>
+    <string name="receiver_connecting">正在连接…</string>
+    <string name="receiver_wait_pair">等待配对</string>
+    <string name="receiver_wait_pair_hint">输入手机发送端页面显示的 6 位配对码\n配对成功后自动开始播放</string>
+    <string name="receiver_autopair">正在免密直连…</string>
+    <string name="receiver_autopair_hint">局域网内只检测到一个发送端，无需配对码</string>
+    <string name="receiver_multi">发现 %1$d 个发送端</string>
+    <string name="receiver_multi_hint">请从列表选择要连接的发送端</string>
+    <string name="receiver_disconnected">连接中断</string>
+    <string name="receiver_disconnected_hint">返回重进接收端即可重新搜索连接</string>
+    <string name="receiver_rejected">发送端已拒绝本机连接</string>
+    <string name="receiver_rejected_hint">如需连接，请在手机端「连接管理」中重新勾选本设备</string>
+    <string name="receiver_pair_ok">配对成功，等待画面…</string>
+    <string name="receiver_pair_wrong">配对码错误</string>
+    <string name="receiver_pair_wrong_hint">请重试（连续输错 3 次发送端会断开）</string>
+    <string name="receiver_need_code">需要配对码</string>
+    <string name="receiver_need_code_hint">检测到局域网内有多个发送端，请输入目标发送端显示的 6 位配对码</string>
+    <string name="receiver_decoder_fail">解码器初始化失败</string>
+    <string name="receiver_decoder_error">解码错误：%1$s，返回重进重试</string>
+    <string name="receiver_h264_unsupported">本机不支持 H.264 硬解</string>
+    <string name="receiver_device_name">接收端</string>
+    <string name="receiver_clip_copied">已复制到本机剪贴板</string>
+    <string name="receiver_clip_dialog_title">发送到手机剪贴板</string>
+    <string name="receiver_clip_dialog_hint">输入要发送到手机剪贴板的文本</string>
+    <string name="receiver_clip_send">发送</string>
+    <string name="receiver_clip_cancel">取消</string>
+    <string name="receiver_clip_empty">文本为空，未发送</string>
+    <string name="receiver_clip_sent">已发送到手机剪贴板</string>
+    <string name="receiver_files_no_conn">请先连接发送端再浏览文件</string>
+    <string name="receiver_push">📤 推送</string>
+    <string name="receiver_push_no_conn">请先连接发送端再推送文件</string>
+    <string name="receiver_push_progress">推送中… %1$d/%2$d KB</string>
+    <string name="receiver_push_ok">已推送到手机：%1$s</string>
+    <string name="receiver_push_fail">推送失败：%1$s</string>
+    <string name="receiver_push_read_fail">读取本机文件失败：%1$s</string>
+    <string name="receiver_stats">📊 统计</string>
+    <string name="receiver_stats_line">分辨率 %1$dx%2$d\n推流 %3$d FPS  码率 %4$s\n丢帧 %5$d  解码 %6$d FPS</string>
+    <string name="receiver_refresh">🔄 刷新</string>
+    <string name="receiver_pair_timeout">连接超时：发送端可能未开始投屏，或网络不通。请点右上角「刷新」重新搜索</string>
+    <string name="receiver_crypto_off">加密握手失败，已切换为明文连接</string>
+
+    <!-- ========== 文件浏览 FileBrowserActivity ========== -->
+    <string name="file_up">↑ 上级</string>
+    <string name="file_loading">加载中…</string>
+    <string name="file_no_host">缺少发送端地址</string>
+    <string name="file_disconnected">连接已断开，返回重进</string>
+    <string name="file_pair_failed">配对失败，返回重进重试</string>
+    <string name="file_rejected">发送端拒绝了连接：%1$s</string>
+    <string name="file_count">%1$d 项</string>
+    <string name="file_save_fail_storage">无法访问本机存储</string>
+    <string name="file_save_fail_create">无法创建本地文件</string>
+    <string name="file_saved_to">下载并保存到 %1$s</string>
+    <string name="file_downloading">下载中… %1$d%%</string>
+    <string name="file_image_preview">图片预览：%1$s（返回键继续浏览）</string>
+    <string name="file_image_fail">图片解码失败</string>
+    <string name="file_text_preview">文本预览：%1$s（返回键继续浏览）</string>
+    <string name="file_saved">已保存：%1$s</string>
+
+    <!-- ========== 发送端 CastService（通知与用户可见状态） ========== -->
+    <string name="cast_channel_name">投屏</string>
+    <string name="cast_noti_title">QPM 正在投屏</string>
+    <string name="cast_clip_copied">已复制到手机剪贴板</string>
+
 </resources>

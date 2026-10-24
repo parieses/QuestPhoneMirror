@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.Surface
 import com.qpm.protocol.VFlag
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * H.264 硬解码器，直接渲染到 SurfaceView 的 Surface。
@@ -19,12 +20,20 @@ class H264Decoder(
     private val codec: MediaCodec =
         MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
 
+    /** 已成功渲染的帧数（接收端统计浮窗的「解码 FPS」用）。 */
+    private val decodedFrames = AtomicLong(0)
+
+    /** 存活标志：stop() 后为 false，异步回调与 feed 不再触碰 codec/Surface，避免向已销毁的 Surface 渲染导致原生崩溃。 */
+    @Volatile
+    private var alive = true
+
     // 异步模式下输入缓冲由 onInputBufferAvailable 回调分配，必须入队后再由 feed() 取用；
     // 不能依赖 dequeueInputBuffer（异步模式下它不等待、直接返回 -1，会导致帧全丢、画面黑屏）。
     private val availableInput = ArrayDeque<Int>()
 
     private val callback = object : MediaCodec.Callback() {
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
+            if (!alive) return
             synchronized(availableInput) { availableInput.addLast(index) }
         }
 
@@ -33,11 +42,18 @@ class H264Decoder(
             index: Int,
             info: MediaCodec.BufferInfo
         ) {
-            if (info.size > 0) codec.releaseOutputBuffer(index, true)
-            else codec.releaseOutputBuffer(index, false)
+            if (!alive) {
+                runCatching { codec.releaseOutputBuffer(index, false) }
+                return
+            }
+            if (info.size > 0) {
+                codec.releaseOutputBuffer(index, true)
+                decodedFrames.incrementAndGet()
+            } else codec.releaseOutputBuffer(index, false)
         }
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            if (!alive) return
             onVideoSize(
                 format.getInteger(MediaFormat.KEY_WIDTH),
                 format.getInteger(MediaFormat.KEY_HEIGHT)
@@ -62,6 +78,7 @@ class H264Decoder(
             codec.start()
         } catch (e: Exception) {
             Log.e(TAG, "初始化失败: ${e.message}")
+            alive = false
             runCatching { codec.release() }
             throw e
         }
@@ -69,7 +86,7 @@ class H264Decoder(
 
     /** body = [pts:u64][flags:u8][h264 data] */
     fun feed(body: ByteArray) {
-        if (body.size < 9) return
+        if (!alive || body.size < 9) return
         val bb = ByteBuffer.wrap(body)
         val pts = bb.long
         val flags = bb.get().toInt()
@@ -86,13 +103,18 @@ class H264Decoder(
         var f = 0
         if (flags and VFlag.KEY != 0) f = f or MediaCodec.BUFFER_FLAG_KEY_FRAME
         if (flags and VFlag.CONFIG != 0) f = f or MediaCodec.BUFFER_FLAG_CODEC_CONFIG
-        codec.queueInputBuffer(index, 0, data.size, pts, f)
+        runCatching { codec.queueInputBuffer(index, 0, data.size, pts, f) }
     }
 
     fun stop() {
+        alive = false
+        synchronized(availableInput) { availableInput.clear() }
         runCatching { codec.stop() }
         runCatching { codec.release() }
     }
+
+    /** 已解码并渲染的帧数（供接收端计算解码 FPS）。 */
+    fun framesDecoded(): Long = decodedFrames.get()
 
     private companion object {
         private const val TAG = "H264Decoder"

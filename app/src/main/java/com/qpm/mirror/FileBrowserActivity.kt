@@ -87,7 +87,7 @@ class FileBrowserActivity : AppCompatActivity() {
         val port = intent.getIntExtra(EXTRA_PORT, CastService.TCP_PORT)
         val pairCode = intent.getStringExtra(EXTRA_PAIR_CODE) ?: ""
         if (host.isNullOrEmpty()) {
-            toast("缺少发送端地址")
+            toast(getString(R.string.file_no_host))
             finish()
             return
         }
@@ -108,15 +108,15 @@ class FileBrowserActivity : AppCompatActivity() {
             decoder = null,
             onScreenInfo = { _, _, _ -> },
             onStatus = { s -> runOnUiThread { tvFileStatus.text = s } },
-            onDisconnected = { runOnUiThread { tvFileStatus.text = "连接已断开，返回重进" } },
+            onDisconnected = { runOnUiThread { tvFileStatus.text = getString(R.string.file_disconnected) } },
             onPairResult = { ok -> runOnUiThread {
-                if (ok) requestList() else tvFileStatus.text = "配对失败，返回重进重试"
+                if (ok) requestList() else tvFileStatus.text = getString(R.string.file_pair_failed)
             } },
             onFileList = { lines -> runOnUiThread { onFileList(lines) } },
             onFileData = { chunk -> runOnUiThread { onFileData(chunk) } },
             onFileError = { msg -> runOnUiThread { onFileError(msg) } },
-            onRejected = { reason -> runOnUiThread { tvFileStatus.text = "发送端拒绝了连接：$reason" } },
-            helloName = Build.MODEL ?: "接收端"
+            onRejected = { reason -> runOnUiThread { tvFileStatus.text = getString(R.string.file_rejected, reason) } },
+            helloName = Build.MODEL ?: getString(R.string.receiver_device_name)
         ).also { it.connect(host, port, pairCode) }
     }
 
@@ -124,7 +124,7 @@ class FileBrowserActivity : AppCompatActivity() {
 
     private fun requestList() {
         tvPath.text = currentPath
-        tvFileStatus.text = "加载中…"
+        tvFileStatus.text = getString(R.string.file_loading)
         client?.fileList(currentPath)
     }
 
@@ -143,7 +143,7 @@ class FileBrowserActivity : AppCompatActivity() {
             else "${e.name}  ·  ${fmtSize(e.size)}  ·  ${e.mtime}"
         }
         lvFiles.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, labels)
-        tvFileStatus.text = "${parsed.size} 项"
+        tvFileStatus.text = getString(R.string.file_count, parsed.size)
     }
 
     private fun onFileError(msg: String) {
@@ -182,17 +182,17 @@ class FileBrowserActivity : AppCompatActivity() {
         }
         if (dlMode == MODE_SAVE) {
             val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: run {
-                toast("无法访问本机存储"); return
+                toast(getString(R.string.file_save_fail_storage)); return
             }
             val out = File(dir, File(path).name)
             dlStream = runCatching { FileOutputStream(out) }.getOrNull()
             if (dlStream == null) {
-                toast("无法创建本地文件"); return
+                toast(getString(R.string.file_save_fail_create)); return
             }
-            tvFileStatus.text = "下载并保存到 ${out.absolutePath}"
+            tvFileStatus.text = getString(R.string.file_saved_to, out.absolutePath)
         } else {
             dlBuffer = ByteArrayOutputStream()
-            tvFileStatus.text = "下载中… 0%"
+            tvFileStatus.text = getString(R.string.file_downloading, 0)
         }
         client?.fileGet(path)
     }
@@ -210,7 +210,7 @@ class FileBrowserActivity : AppCompatActivity() {
             }
         }.onFailure { Log.e(TAG, "写入失败: ${it.message}") }
         if (dlTotal > 0 && dlMode != MODE_SAVE) {
-            tvFileStatus.text = "下载中… ${dlReceived * 100 / dlTotal}%"
+            tvFileStatus.text = getString(R.string.file_downloading, dlReceived * 100 / dlTotal)
         }
         if (chunk.eof) finishDownload()
     }
@@ -225,16 +225,16 @@ class FileBrowserActivity : AppCompatActivity() {
                     lvFiles.visibility = View.GONE
                     ivPreview.visibility = View.VISIBLE
                     ivPreview.setImageBitmap(bmp)
-                    tvFileStatus.text = "图片预览：${File(path).name}（返回键继续浏览）"
+                    tvFileStatus.text = getString(R.string.file_image_preview, File(path).name)
                 } else {
-                    tvFileStatus.text = "图片解码失败"
+                    tvFileStatus.text = getString(R.string.file_image_fail)
                 }
             }
             MODE_TEXT -> {
                 lvFiles.visibility = View.GONE
                 tvPreview.visibility = View.VISIBLE
                 tvPreview.text = String(dlBuffer?.toByteArray() ?: ByteArray(0), Charsets.UTF_8)
-                tvFileStatus.text = "文本预览：${File(path).name}（返回键继续浏览）"
+                tvFileStatus.text = getString(R.string.file_text_preview, File(path).name)
             }
             MODE_SAVE -> {
                 runCatching { dlStream?.flush() }
@@ -242,8 +242,8 @@ class FileBrowserActivity : AppCompatActivity() {
                     getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return,
                     File(path).name
                 )
-                toast("已保存：${out.absolutePath}")
-                tvFileStatus.text = "已保存到 ${out.absolutePath}"
+                toast(getString(R.string.file_saved, out.absolutePath))
+                tvFileStatus.text = getString(R.string.file_saved_to, out.absolutePath)
             }
         }
         resetDownload()
@@ -265,7 +265,7 @@ class FileBrowserActivity : AppCompatActivity() {
             ivPreview.visibility = View.GONE
             tvPreview.visibility = View.GONE
             lvFiles.visibility = View.VISIBLE
-            tvFileStatus.text = "${entries.size} 项"
+            tvFileStatus.text = getString(R.string.file_count, entries.size)
             return
         }
         super.onBackPressed()

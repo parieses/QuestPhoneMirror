@@ -1,8 +1,10 @@
 package com.qpm.mirror
 
+import android.util.Log
 import com.qpm.protocol.Decoders
 import com.qpm.protocol.Discovery
 import com.qpm.protocol.FileChunk
+import com.qpm.protocol.Frame
 import com.qpm.protocol.FrameReader
 import com.qpm.protocol.Proto
 import com.qpm.protocol.Type
@@ -27,8 +29,16 @@ class MirrorClient(
     private val onMultipleSenders: (List<Discovery.Device>) -> Unit = {},
     /** 发送端拒绝连接（如未在白名单）时回调，参数为原因。 */
     private val onRejected: (String) -> Unit = {},
+    /** 发送端同步剪贴板文本过来时回调（手机复制内容 → 接收端剪贴板）。 */
+    private val onClipboard: (String) -> Unit = {},
+    /** 文件推送结果回调（成功 + 保存路径 / 失败 + 原因）。 */
+    private val onFilePushResult: (Boolean, String) -> Unit = { _, _ -> },
+    /** 投屏统计回调：fps / bitrateBps / w / h / dropped。 */
+    private val onStats: (IntArray) -> Unit = {},
     /** 本机设备名，连接后通过 HELLO 帧报送发送端（连接管理列表展示用）。 */
-    private val helloName: String = ""
+    private val helloName: String = "",
+    /** 是否启用加密通道（默认开；握手失败由调用方关闭后重连用明文）。 */
+    private val cryptoEnabled: Boolean = true
 ) {
     @Volatile private var socket: Socket? = null
     @Volatile private var out: OutputStream? = null
@@ -38,6 +48,21 @@ class MirrorClient(
 
     @Volatile private var phoneScreenW = 0
     @Volatile private var phoneScreenH = 0
+
+    /** 加密通道：本端为接收端，发出方向为 DIR_MIRROR。握手前/失败回落时自动透传。 */
+    private val channel = SecureChannel(Crypto.DIR_MIRROR)
+
+    /** 加密写：武装后自动 AES-GCM 封装帧体，未武装则原样发出。
+     *  synchronize 在 channel 监视器上，保证「seal（计数器自增）+ 写出」原子完成，避免多线程下计数错位。 */
+    private fun writeCipher(bytes: ByteArray) {
+        synchronized(channel) {
+            runCatching { out?.write(channel.seal(bytes)) }
+        }
+    }
+
+    companion object {
+        private const val TAG = "MirrorClient"
+    }
 
     fun phoneW() = phoneScreenW
     fun phoneH() = phoneScreenH
@@ -74,7 +99,9 @@ class MirrorClient(
         Thread {
             try {
                 onStatus("连接 $host:$port")
-                connectTo(host, port, autoPair = false, pairCode = pairCode)
+                // 手动 / IP 连接也先尝试免密直连（发空配对码）：唯一发送端会直接接受，无需输码；
+                // 仅当网络内确有多个发送端（发送端拒绝空配对码）才回落到「输入配对码」界面。
+                connectTo(host, port, autoPair = pairCode == null, pairCode = pairCode)
             } catch (e: Exception) {
                 onStatus("连接中断：${e.message}")
             } finally {
@@ -89,22 +116,62 @@ class MirrorClient(
         val s = Socket(host, port).apply { tcpNoDelay = true }
         socket = s
         out = s.getOutputStream()
-        // 先报送设备名，让发送端「连接管理」能显示是谁（无论是否配对）
-        if (helloName.isNotBlank()) {
-            runCatching { out?.write(Proto.hello(helloName)) }
+
+        // reader 提到函数作用域，关闭加密（cryptoEnabled=false）时主循环仍需使用
+        var pending: Frame? = null
+        val reader = FrameReader(s.getInputStream())
+
+        // 关键：设备名（HELLO）必须在密钥交换握手之前以明文发送。
+        // 否则它会占用加密计数器槽位，导致发送端解密 PAIR 帧时 nonce 错位（期望 0、实为 1），
+        // GCM 校验失败 → 发送端永不调用 handlePair → 接收端永远卡在「正在配对」。
+        if (helloName.isNotBlank()) writeCipher(Proto.hello(helloName))
+
+        // 密钥交换握手：先发本方 EC(secp256r1) 临时公钥（明文，KEY_EXCHANGE 帧永不被加密）。
+        // 任意一步失败都降级为明文，绝不抛异常卡死连接。
+        if (cryptoEnabled) {
+            val kp = runCatching { Crypto.newKeyPair() }.getOrNull()
+            if (kp != null) {
+                runCatching { out?.write(Proto.keyExchange(kp.publicEncoded)) }
+                // 预读一帧：期望对端 KE；设短超时，超时/非 KE 即回落明文（兼容旧版发送端）。
+                runCatching { s.soTimeout = 1500 }
+                val first = runCatching { reader.read() }.getOrNull()
+                runCatching { s.soTimeout = 0 }
+                if (first == null) {
+                    Log.w(TAG, "未收到对端 KE（超时），回退明文通道")
+                } else if (first.type == Type.KEY_EXCHANGE) {
+                    val session = runCatching { Crypto.deriveSessionKey(kp, first.body) }.getOrNull()
+                    if (session != null) {
+                        channel.arm(session)
+                        Log.i(TAG, "加密通道已建立（AES-256-GCM）")
+                    } else {
+                        Log.w(TAG, "密钥派生失败，回退明文通道")
+                        onStatus("QPM_CRYPTO_OFF")
+                        s.close()
+                        return
+                    }
+                } else {
+                    Log.w(TAG, "对端不支持加密，回退明文通道")
+                    pending = first
+                }
+            }
         }
+
+        // 配对（已武装则自动被加密）
+
         if (autoPair) {
             // 唯一发送端：直接发空配对码走免密直连
-            runCatching { out?.write(Proto.pair("")) }
+            writeCipher(Proto.pair(""))
         } else if (pairCode != null) {
-            runCatching { out?.write(Proto.pair(pairCode)) }
+            writeCipher(Proto.pair(pairCode))
         }
         onStatus(if (autoPair) "正在免密直连…" else "已连接，请输入发送端显示的配对码")
 
-        val reader = FrameReader(s.getInputStream())
         while (true) {
-            val frame = reader.read() ?: break
+            val raw = pending ?: (reader.read() ?: break)
+            pending = null
+            val frame = channel.open(raw)
             when (frame.type) {
+                Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
                 Type.VIDEO_FRAME -> decoder?.feed(frame.body)
                 Type.SCREEN_INFO -> {
                     val (w, h, dpi) = Decoders.screenInfo(frame)
@@ -120,43 +187,36 @@ class MirrorClient(
                     // 发送端主动拒绝（未在白名单），回调后等对端断开
                     onRejected(Decoders.textOf(frame))
                 }
+                Type.CLIPBOARD -> onClipboard(Decoders.clipboardOf(frame))
+                Type.FILE_PUSH_RES -> onFilePushResult(Decoders.filePushResOf(frame))
+                Type.STATS -> onStats(Decoders.statsOf(frame))
             }
         }
     }
 
     /** 发送配对码（空串 = 免密直连请求）。 */
     fun pair(code: String) {
-        try {
-            out?.write(Proto.pair(code))
-        } catch (_: Exception) {
-            // 连接已断
-        }
+        writeCipher(Proto.pair(code))
+    }
+
+    /** 发送剪贴板文本到手机（接收端 -> 发送端方向）。 */
+    fun sendClipboard(text: String) {
+        writeCipher(Proto.clipboard(text))
     }
 
     /** 请求列出目录。 */
     fun fileList(path: String) {
-        try {
-            out?.write(Proto.fileListReq(path))
-        } catch (_: Exception) {
-            // 连接已断
-        }
+        writeCipher(Proto.fileListReq(path))
     }
 
     /** 请求下载文件。 */
     fun fileGet(path: String) {
-        try {
-            out?.write(Proto.fileGetReq(path))
-        } catch (_: Exception) {
-            // 连接已断
-        }
+        writeCipher(Proto.fileGetReq(path))
     }
 
+    /** 发送原始帧（文件推送等），武装后自动加密。 */
     fun send(bytes: ByteArray) {
-        try {
-            out?.write(bytes)
-        } catch (_: Exception) {
-            // 连接已断
-        }
+        writeCipher(bytes)
     }
 
     fun stop() {

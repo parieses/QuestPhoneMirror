@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  English translations. Keys must stay in sync with values/strings.xml (default zh).
+  Note: log lines and runtime diagnostics (codec errors, internal exceptions) intentionally
+  stay in their original language; only user-facing UI strings are translated.
+-->
+<resources>
+
+    <string name="app_name">QPM Phone Mirror</string>
+    <string name="accessibility_desc">Lets QPM simulate taps, swipes and text input on this phone from the receiver</string>
+    <string name="a11y_service_label">QPM Control Service</string>
+
+    <!-- ========== Role screen (RoleActivity) ========== -->
+    <string name="role_app_name">QPM Phone Mirror</string>
+    <string name="role_icon_desc">QPM icon</string>
+    <string name="role_subtitle">Install the same app on both devices and pick a role (phone, Quest, tablet or PC)</string>
+    <string name="role_sender">I\'m the sender</string>
+    <string name="role_sender_desc">On the phone: capture the screen and stream it</string>
+    <string name="role_receiver">I\'m the receiver</string>
+    <string name="role_receiver_desc">On the receiver: auto-discover and show the screen</string>
+    <string name="role_lan_hint">Both devices must be on the same Wi-Fi network</string>
+    <string name="role_update_check">Check for updates</string>
+    <string name="role_update_source">Update info comes from GitHub Releases (unauthenticated API: 60 requests/hour; auto-check every 12 hours)</string>
+    <string name="role_version_current">Version</string>
+
+    <!-- ========== Update: check / dialog / download ========== -->
+    <string name="update_version_line">Version %1$s · tap to check GitHub for updates</string>
+    <string name="update_checking">Checking GitHub for updates…</string>
+    <string name="update_latest">Already up to date (%1$s)</string>
+    <string name="update_failed_check">Update check failed: %1$s</string>
+    <string name="update_install_perm_denied">Install permission denied; can\'t download the update</string>
+    <string name="update_downloading">Downloading update…</string>
+    <string name="update_install_perm_ask">Please allow "QPM Phone Mirror" to install unknown apps</string>
+    <string name="update_already_downloading">Update is already downloading</string>
+    <string name="update_ready_toast">%1$s downloaded. Come back to this page to install</string>
+    <string name="update_install_perm_ask2">Allow "QPM Phone Mirror" to install unknown apps to install %1$s</string>
+    <string name="update_progress_pct">Downloaded %1$d%%  %2$s / %3$s</string>
+    <string name="update_progress_size">Downloaded %1$s</string>
+    <string name="update_open_browser_fail">Can\'t open a browser. Visit GitHub Releases manually</string>
+    <string name="update_btn_later_auto">Don\'t show this version again</string>
+    <string name="update_btn_later_manual">Later</string>
+
+    <string name="update_avail_title">New version available</string>
+    <string name="update_avail_subtitle">QPM Phone Mirror can be updated</string>
+    <string name="update_avail_notes">What\'s new</string>
+    <string name="update_avail_download">Download &amp; install</string>
+    <string name="update_avail_github">View full release on GitHub</string>
+
+    <string name="update_progress_title">Downloading update</string>
+    <string name="update_progress_phase">%1$s · picking the fastest source…</string>
+    <string name="update_progress_picking">Picking the fastest source…</string>
+    <string name="update_progress_background">Download in background</string>
+
+    <string name="update_dl_failed">Download failed (%1$s). Check your network and retry</string>
+    <string name="update_err_cannot_resume">Interrupted; can\'t resume</string>
+    <string name="update_err_device_not_found">Storage unavailable</string>
+    <string name="update_err_file_exists">File already exists</string>
+    <string name="update_err_file_error">Local file write error</string>
+    <string name="update_err_http_data">Network data error</string>
+    <string name="update_err_no_space">Not enough storage</string>
+    <string name="update_err_too_many_redirects">Too many redirects</string>
+    <string name="update_err_http_code">Server returned an error</string>
+    <string name="update_err_unknown">Unknown error</string>
+    <string name="update_err_code">Error code %1$d</string>
+    <string name="update_no_url">No download URL available. Get it from GitHub Releases</string>
+    <string name="update_dl_title">QPM Phone Mirror %1$s</string>
+    <string name="update_dl_desc">Downloading update…</string>
+    <string name="update_bad_url">Invalid download URL. Get it from GitHub Releases</string>
+    <string name="update_enqueue_fail">Can\'t start the download: %1$s</string>
+    <string name="update_enqueue_fail2">Can\'t start the download. Get it from GitHub Releases</string>
+    <string name="update_install_perm_toast">Allow "QPM Phone Mirror" to install unknown apps first</string>
+    <string name="update_install_path_fail">Bad APK path. Download again</string>
+    <string name="update_net_fail">No network. Update check failed</string>
+    <string name="update_no_tag">Release has no version tag. Check GitHub manually</string>
+    <string name="update_no_apk">This release has no APK attached. Download from GitHub Releases</string>
+    <string name="update_no_notes">(No release notes)</string>
+    <string name="update_notes_truncated">\n… (more on GitHub Releases)</string>
+    <string name="update_no_release">No releases yet, or the repo has been made private</string>
+    <string name="update_ratelimit">GitHub is rate limiting (60/hour unauthenticated). Retry later</string>
+    <string name="update_http_error">GitHub error (HTTP %1$d). Retry later</string>
+    <string name="update_parse_fail">Failed to parse GitHub response. Please try again later</string>
+
+    <!-- ========== Sender screen (SenderActivity) ========== -->
+    <string name="sender_title">Sender</string>
+    <string name="sender_subtitle">This phone\'s screen is mirrored</string>
+    <string name="sender_status_idle">Not casting</string>
+    <string name="sender_start">Start casting</string>
+    <string name="sender_stop">Stop casting</string>
+    <string name="sender_status_casting">Casting. Waiting for a receiver…</string>
+    <string name="sender_status_stopped">Casting stopped</string>
+    <string name="sender_pair_title">Pair code</string>
+    <string name="sender_pair_desc">The receiver needs this code to view and control</string>
+    <string name="sender_warn_a11y">Control disabled — view only · tap to enable</string>
+    <string name="sender_quality_title">Quality (pick Smooth if the receiver lags)</string>
+    <string name="sender_q_smooth">Smooth 4M</string>
+    <string name="sender_q_balanced">Balanced 6M</string>
+    <string name="sender_q_high">High 10M</string>
+    <string name="sender_keep_awake">Keep the screen on while casting</string>
+    <string name="sender_keep_awake_desc">Capture stops when the screen turns off; enable this to keep it on</string>
+    <string name="sender_conn_mgmt">Connected devices</string>
+    <string name="sender_conn_desc">Scan receivers while casting; unchecking kicks that device immediately</string>
+    <string name="sender_conn_not_scanned">Not scanned (open "I\'m the receiver" on the other device)</string>
+    <string name="sender_scan">Scan receivers</string>
+    <string name="sender_scanning">Scanning the local network…</string>
+    <string name="sender_scan_none">No receivers found (make sure the other device opened "I\'m the receiver" and is on the same Wi-Fi)</string>
+    <string name="sender_scan_none2">No receivers (open "I\'m the receiver" on the other device first)</string>
+    <string name="sender_scan_found">Found %1$d receiver(s)</string>
+    <string name="sender_found">Found %1$d receiver(s)</string>
+    <string name="sender_item_connected">  · connected</string>
+    <string name="sender_item_online">  · online</string>
+    <string name="sender_kick_allow">Allowed %1$s</string>
+    <string name="sender_kick_deny">Disconnected and blocked %1$s</string>
+    <string name="sender_file_share">File sharing</string>
+    <string name="sender_file_desc">Needed for the receiver\'s "Files" button; shared storage root only</string>
+    <string name="sender_file_grant">Grant file access</string>
+    <string name="sender_file_granted">File access granted ✓</string>
+    <string name="sender_file_granted_toast">Granted</string>
+    <string name="sender_file_denied">Storage permission denied; file features disabled</string>
+    <string name="sender_file_perm_hint">Enable "Allow managing all files", then come back</string>
+    <string name="sender_file_settings_fail">Can\'t open settings. Grant file access manually in system settings</string>
+    <string name="sender_keepawake_ask">Allow "Modify system settings" to keep the screen on; casting starts now</string>
+    <string name="sender_projection_denied">Screen capture permission denied</string>
+    <string name="sender_keep_foreground">Keep this app in the foreground while casting, and allow it to run in the background in system settings</string>
+
+    <!-- ========== Receiver screen (ReceiverActivity) ========== -->
+    <string name="receiver_title">Receiver</string>
+    <string name="receiver_ip_hint">Sender IP (use 127.0.0.1 for self-test)</string>
+    <string name="receiver_connect">Connect</string>
+    <string name="receiver_searching">Searching for senders…</string>
+    <string name="receiver_search_hint">Open "I\'m the sender" on the phone and start casting\nBoth devices need the same Wi-Fi</string>
+    <string name="receiver_pair_hint">Enter the 6-digit pair code</string>
+    <string name="receiver_pair">Pair</string>
+    <string name="receiver_files">📁 Files</string>
+    <string name="receiver_clipboard">📋 Clipboard</string>
+    <string name="receiver_surface_not_ready">Video surface not ready yet</string>
+    <string name="receiver_pair_empty">Enter the pair code shown on the sender</string>
+    <string name="receiver_pairing">Pairing…</string>
+    <string name="receiver_connecting">Connecting…</string>
+    <string name="receiver_wait_pair">Waiting for pairing</string>
+    <string name="receiver_wait_pair_hint">Enter the 6-digit code shown on the sender\nPlayback starts once paired</string>
+    <string name="receiver_autopair">Connecting directly…</string>
+    <string name="receiver_autopair_hint">Only one sender on the network — no code needed</string>
+    <string name="receiver_multi">Found %1$d sender(s)</string>
+    <string name="receiver_multi_hint">Pick a sender from the list</string>
+    <string name="receiver_disconnected">Connection lost</string>
+    <string name="receiver_disconnected_hint">Reopen the receiver to search again</string>
+    <string name="receiver_rejected">Sender rejected this device</string>
+    <string name="receiver_rejected_hint">Re-check this device in the sender\'s device list to connect</string>
+    <string name="receiver_pair_ok">Paired. Waiting for video…</string>
+    <string name="receiver_pair_wrong">Wrong pair code</string>
+    <string name="receiver_pair_wrong_hint">Retry (3 wrong tries and the sender disconnects)</string>
+    <string name="receiver_need_code">Pair code required</string>
+    <string name="receiver_need_code_hint">Multiple senders detected on the LAN. Enter the 6-digit code shown on the target sender</string>
+    <string name="receiver_decoder_fail">Decoder init failed</string>
+    <string name="receiver_decoder_error">Decode error: %1$s. Reopen to retry</string>
+    <string name="receiver_h264_unsupported">H.264 hardware decode not supported</string>
+    <string name="receiver_device_name">Receiver</string>
+    <string name="receiver_clip_copied">Copied to this device\'s clipboard</string>
+    <string name="receiver_clip_dialog_title">Send to phone clipboard</string>
+    <string name="receiver_clip_dialog_hint">Text to send to the phone clipboard</string>
+    <string name="receiver_clip_send">Send</string>
+    <string name="receiver_clip_cancel">Cancel</string>
+    <string name="receiver_clip_empty">Empty text — nothing sent</string>
+    <string name="receiver_clip_sent">Sent to phone clipboard</string>
+    <string name="receiver_files_no_conn">Connect to a sender first</string>
+    <string name="receiver_push">📤 Push</string>
+    <string name="receiver_push_no_conn">Connect to a sender first to push files</string>
+    <string name="receiver_push_progress">Pushing… %1$d/%2$d KB</string>
+    <string name="receiver_push_ok">Pushed to phone: %1$s</string>
+    <string name="receiver_push_fail">Push failed: %1$s</string>
+    <string name="receiver_push_read_fail">Failed to read local file: %1$s</string>
+    <string name="receiver_stats">📊 Stats</string>
+    <string name="receiver_stats_line">Res %1$dx%2$d\nCast %3$d FPS  Bitrate %4$s\nDropped %5$d  Decoded %6$d FPS</string>
+    <string name="receiver_refresh">🔄 Refresh</string>
+    <string name="receiver_pair_timeout">Connection timed out: the sender may not be casting, or the network is unreachable. Tap "Refresh" (top-right) to rescan</string>
+    <string name="receiver_crypto_off">Encryption handshake failed; switched to plaintext</string>
+
+    <!-- ========== File browser (FileBrowserActivity) ========== -->
+    <string name="file_up">↑ Up</string>
+    <string name="file_loading">Loading…</string>
+    <string name="file_no_host">Missing sender address</string>
+    <string name="file_disconnected">Disconnected. Go back and retry</string>
+    <string name="file_pair_failed">Pairing failed. Go back and retry</string>
+    <string name="file_rejected">Sender rejected the connection: %1$s</string>
+    <string name="file_count">%1$d item(s)</string>
+    <string name="file_save_fail_storage">Can\'t access local storage</string>
+    <string name="file_save_fail_create">Can\'t create local file</string>
+    <string name="file_saved_to">Saving to %1$s</string>
+    <string name="file_downloading">Downloading… %1$d%%</string>
+    <string name="file_image_preview">Image: %1$s (Back to browse)</string>
+    <string name="file_image_fail">Image decode failed</string>
+    <string name="file_text_preview">Text: %1$s (Back to browse)</string>
+    <string name="file_saved">Saved: %1$s</string>
+
+    <!-- ========== Sender service (CastService notification & status) ========== -->
+    <string name="cast_channel_name">Casting</string>
+    <string name="cast_noti_title">QPM is casting</string>
+    <string name="cast_clip_copied">Copied to phone clipboard</string>
+
+</resources>

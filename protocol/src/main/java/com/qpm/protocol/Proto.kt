@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 
-/** 消息类型。手机 -> 接收端用 0x01/0x20/0x15/0x17/0x19/0x1A/0x1C，接收端 -> 手机用 0x10-0x14/0x16/0x18/0x1B。 */
+/** 消息类型。手机 -> 接收端用 0x01/0x20/0x15/0x17/0x19/0x1A/0x1C/0x1F/0x23，接收端 -> 手机用 0x10-0x14/0x16/0x18/0x1B/0x1D/0x21/0x22。 */
 object Type {
     const val VIDEO_FRAME: Byte = 0x01
     const val SCREEN_INFO: Byte = 0x20
@@ -35,6 +35,18 @@ object Type {
     const val HELLO: Byte = 0x1B
     /** 发送端拒绝连接：手机 -> 接收端，body 为 UTF-8 原因（如未在白名单），发送后即断开 */
     const val REJECT: Byte = 0x1C
+    /** 剪贴板同步：双向，body 为 UTF-8 文本（手机->接收端=写入接收端剪贴板；接收端->手机=写入手机剪贴板） */
+    const val CLIPBOARD: Byte = 0x1D
+    /** 密钥交换：双向，body 为 X.509 编码的 EC(secp256r1) 临时公钥；连接后最先发送，此后帧体全部 AES-GCM 加密 */
+    const val KEY_EXCHANGE: Byte = 0x1E
+    /** 投屏统计：手机 -> 接收端（每秒广播），body = [fps:u16][bitrateBps:u32][w:u16][h:u16][dropped:u16] */
+    const val STATS: Byte = 0x1F
+    /** 文件推送：接收端 -> 手机，body = [total:u64][path UTF-8]，path 为手机侧目标路径 */
+    const val FILE_PUSH_REQ: Byte = 0x21
+    /** 文件推送：数据分片，body = [offset:u64][flags:u8(eof)][chunk] */
+    const val FILE_PUSH_DATA: Byte = 0x22
+    /** 文件推送：结果，body = [ok:u8][msg UTF-8]；ok=1 时 msg 为手机侧保存路径 */
+    const val FILE_PUSH_RES: Byte = 0x23
 }
 
 /** 视频帧附加标志 */
@@ -168,6 +180,63 @@ object Proto {
         b.put(raw)
         return b.array()
     }
+
+    // ---------- 剪贴板 ----------
+
+    /** 剪贴板文本同步（双向）。 */
+    fun clipboard(text: String): ByteArray {
+        val raw = text.toByteArray(StandardCharsets.UTF_8)
+        val b = head(Type.CLIPBOARD, raw.size)
+        b.put(raw)
+        return b.array()
+    }
+
+    // ---------- 密钥交换 / 统计 / 文件推送 ----------
+
+    /** 密钥交换：body 为 X.509 编码的 EC 公钥。 */
+    fun keyExchange(publicKeyEncoded: ByteArray): ByteArray {
+        val b = head(Type.KEY_EXCHANGE, publicKeyEncoded.size)
+        b.put(publicKeyEncoded)
+        return b.array()
+    }
+
+    /** 统计：body = [fps:u16][bitrateBps:u32][w:u16][h:u16][dropped:u16]，共 12 字节。 */
+    fun stats(fps: Int, bitrateBps: Int, w: Int, h: Int, dropped: Int): ByteArray {
+        val b = head(Type.STATS, 12)
+        b.putShort(fps.toShort())
+        b.putInt(bitrateBps)
+        b.putShort(w.toShort())
+        b.putShort(h.toShort())
+        b.putShort(dropped.toShort())
+        return b.array()
+    }
+
+    /** 文件推送请求：[total:u64][path UTF-8]，path 为手机侧目标路径。 */
+    fun filePushReq(total: Long, path: String): ByteArray {
+        val raw = path.toByteArray(StandardCharsets.UTF_8)
+        val b = head(Type.FILE_PUSH_REQ, 8 + raw.size)
+        b.putLong(total)
+        b.put(raw)
+        return b.array()
+    }
+
+    /** 文件推送分片：[offset:u64][flags:u8(eof)][chunk]。 */
+    fun filePushData(offset: Long, eof: Boolean, chunk: ByteArray): ByteArray {
+        val b = head(Type.FILE_PUSH_DATA, 9 + chunk.size)
+        b.putLong(offset)
+        b.put(if (eof) 1.toByte() else 0.toByte())
+        b.put(chunk)
+        return b.array()
+    }
+
+    /** 文件推送结果：[ok:u8][msg UTF-8]；ok=1 时 msg 为保存路径。 */
+    fun filePushRes(ok: Boolean, msg: String): ByteArray {
+        val raw = msg.toByteArray(StandardCharsets.UTF_8)
+        val b = head(Type.FILE_PUSH_RES, 1 + raw.size)
+        b.put(if (ok) 1.toByte() else 0.toByte())
+        b.put(raw)
+        return b.array()
+    }
 }
 
 /** 阻塞读取完整帧；流结束返回 null。 */
@@ -224,6 +293,9 @@ object Decoders {
 
     fun pathOf(f: Frame): String = String(f.body, StandardCharsets.UTF_8)
 
+    /** 剪贴板文本（与 [pathOf] 同为 UTF-8 解码，语义别名）。 */
+    fun clipboardOf(f: Frame): String = String(f.body, StandardCharsets.UTF_8)
+
     fun fileEntriesOf(f: Frame): List<String> =
         String(f.body, StandardCharsets.UTF_8)
             .split("\n")
@@ -240,11 +312,55 @@ object Decoders {
         b.get(chunk)
         return FileChunk(offset, total, eof, chunk)
     }
+
+    /** 统计帧：[fps, bitrateBps, w, h, dropped]。 */
+    fun statsOf(f: Frame): IntArray {
+        val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
+        return intArrayOf(
+            b.short.toInt() and 0xFFFF,
+            b.int,
+            b.short.toInt() and 0xFFFF,
+            b.short.toInt() and 0xFFFF,
+            b.short.toInt() and 0xFFFF
+        )
+    }
+
+    /** 文件推送请求：[total, path]。 */
+    fun filePushReqOf(f: Frame): Pair<Long, String> {
+        val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
+        val total = b.long
+        val path = ByteArray(f.body.size - 8)
+        b.get(path)
+        return Pair(total, String(path, StandardCharsets.UTF_8))
+    }
+
+    /** 文件推送分片：[offset, eof, chunk]。 */
+    fun filePushDataOf(f: Frame): FilePushChunk {
+        val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
+        val offset = b.long
+        val eof = b.get() != 0.toByte()
+        val chunk = ByteArray(f.body.size - 9)
+        b.get(chunk)
+        return FilePushChunk(offset, eof, chunk)
+    }
+
+    /** 文件推送结果：[ok, msg]；ok=1 时 msg 为保存路径。 */
+    fun filePushResOf(f: Frame): Pair<Boolean, String> {
+        val ok = f.body.isNotEmpty() && f.body[0] != 0.toByte()
+        val msg = if (f.body.size > 1) String(f.body, 1, f.body.size - 1, StandardCharsets.UTF_8) else ""
+        return Pair(ok, msg)
+    }
 }
 
 class FileChunk(
     val offset: Long,
     val total: Long,
+    val eof: Boolean,
+    val chunk: ByteArray
+)
+
+class FilePushChunk(
+    val offset: Long,
     val eof: Boolean,
     val chunk: ByteArray
 )
