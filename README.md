@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.9-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.10-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -60,9 +60,10 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 ### 安装
 
-1. 从 [Releases](https://github.com/parieses/QuestPhoneMirror/releases) 下载 `app-debug.apk`
+1. 从 [Releases](https://github.com/parieses/QuestPhoneMirror/releases) 下载 `app-release.apk`
+   （release 签名包；**App 内「检查更新」推送的也是它**，签名一致才能覆盖安装。`app-debug.apk` 仅限开发调试）
 2. **手机**：直接安装（允许未知来源）
-3. **Quest**：只能侧载——开开发者模式后 `adb install app-debug.apk`；
+3. **Quest**：只能侧载——开开发者模式后 `adb install -r app-release.apk`；
    侧载应用不在桌面，在「资料库 → 右上角筛选 → 未知来源」里启动
 
 ### 使用
@@ -76,6 +77,7 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 5. 画面卡顿时：回发送端把「画质」切到「流畅」，优先连 5G Wi-Fi
 6. 浏览发送端文件：接收端左下角「📁 文件」按钮（需先在发送端点「授予文件访问权限」）
 7. 有多台接收端在线时：发送端「连接管理」→「扫描接收端」，取消勾选即断开该设备
+8. 更新：入口页底部「检查更新」→ 有新版本弹窗展示说明 →「下载并安装」；下载自动走 Gitee 镜像 / 加速代理 / GitHub 直连中最快可用的源
 
 * * *
 
@@ -256,8 +258,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.9        # 版本号唯一来源就是 git tag
-git push origin v0.9
+git tag v0.10        # 版本号唯一来源就是 git tag
+git push origin v0.10
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
@@ -273,6 +275,7 @@ CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 G
 | 连上但只能看不能控 | 手机端没开「QPM 控制服务」无障碍权限；或没输入配对码 |
 | 提示「发送端已拒绝本机连接」 | 手机端「连接管理」里取消了本机勾选；重新勾选即可恢复 |
 | 画面花屏 / 绿屏 | 等一秒让关键帧到达；仍不行重进接收端 |
+| 更新时提示「签名不一致」 | 旧版装的是 debug 签名包，卸载后装 Releases 里的 `app-release.apk` 即可（App 无持久数据，卸载无损失） |
 | 画面卡 / 延迟高 | 画质切「流畅」；换 5G Wi-Fi；确认两端离路由器不远 |
 | 解码错误提示 | 返回重进接收端；系统版本过旧的设备可能缺 H.264 硬解 |
 | Netflix 等黑屏 | DRM 硬件保护，无法镜像 |
