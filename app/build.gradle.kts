@@ -55,6 +55,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+
+    buildFeatures {
+        // AGP 8 起默认关闭 BuildConfig 生成，需显式开启；
+        // RoleActivity / AppUpdater 用 BuildConfig.VERSION_NAME 做版本比较
+        buildConfig = true
+    }
 }
 
 dependencies {
