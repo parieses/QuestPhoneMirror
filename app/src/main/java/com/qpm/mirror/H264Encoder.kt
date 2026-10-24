@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.os.Bundle
+import android.util.Log
 import android.view.Surface
 
 /**
@@ -13,7 +14,9 @@ import android.view.Surface
 class H264Encoder(
     width: Int,
     height: Int,
-    private val onFrame: (ByteArray, Int, Int, Long) -> Unit
+    bitRate: Int,
+    private val onFrame: (ByteArray, Int, Int, Long) -> Unit,
+    private val onError: (String) -> Unit = {}
 ) {
     val inputSurface: Surface
 
@@ -108,24 +111,33 @@ class H264Encoder(
             cacheFromFormat(format)
         }
 
-        override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) = Unit
+        override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
+            Log.e(TAG, "onError: ${e.diagnosticInfo ?: e.message}")
+            onError(e.diagnosticInfo ?: e.message ?: "未知编码器错误")
+        }
     }
 
     init {
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-            setInteger(
-                MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
-            )
-            // 每像素约 4 bit，1080p 约 8.3Mbps，网络差可调低
-            setInteger(MediaFormat.KEY_BIT_RATE, width * height * 4)
-            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+        try {
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                setInteger(
+                    MediaFormat.KEY_COLOR_FORMAT,
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
+                )
+                // 画质档位由调用方给定（默认 1080p 约 6Mbps），网络差可调低
+                setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+                setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            }
+            codec.setCallback(callback)
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            inputSurface = codec.createInputSurface()
+            codec.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "初始化失败: ${e.message}")
+            runCatching { codec.release() }
+            throw e
         }
-        codec.setCallback(callback)
-        codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        inputSurface = codec.createInputSurface()
-        codec.start()
     }
 
     /** 新客户端接入时主动要一个关键帧，避免花屏等待。 */
@@ -142,6 +154,8 @@ class H264Encoder(
     }
 
     companion object {
+        private const val TAG = "H264Encoder"
+
         const val FLAG_KEY = 1
         const val FLAG_CONFIG = 2
     }

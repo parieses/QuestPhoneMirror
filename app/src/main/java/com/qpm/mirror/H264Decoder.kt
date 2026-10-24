@@ -2,6 +2,7 @@ package com.qpm.mirror
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.util.Log
 import android.view.Surface
 import com.qpm.protocol.VFlag
 import java.nio.ByteBuffer
@@ -12,7 +13,8 @@ import java.nio.ByteBuffer
  */
 class H264Decoder(
     private val surface: Surface,
-    private val onVideoSize: (Int, Int) -> Unit
+    private val onVideoSize: (Int, Int) -> Unit,
+    private val onError: (String) -> Unit = {}
 ) {
     private val codec: MediaCodec =
         MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
@@ -42,18 +44,27 @@ class H264Decoder(
             )
         }
 
-        override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) = Unit
+        override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
+            Log.e(TAG, "onError: ${e.diagnosticInfo ?: e.message}")
+            onError(e.diagnosticInfo ?: e.message ?: "未知解码器错误")
+        }
     }
 
     init {
-        codec.setCallback(callback)
-        codec.configure(
-            MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1920, 1080),
-            surface,
-            null,
-            0
-        )
-        codec.start()
+        try {
+            codec.setCallback(callback)
+            codec.configure(
+                MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1920, 1080),
+                surface,
+                null,
+                0
+            )
+            codec.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "初始化失败: ${e.message}")
+            runCatching { codec.release() }
+            throw e
+        }
     }
 
     /** body = [pts:u64][flags:u8][h264 data] */
@@ -81,5 +92,9 @@ class H264Decoder(
     fun stop() {
         runCatching { codec.stop() }
         runCatching { codec.release() }
+    }
+
+    private companion object {
+        private const val TAG = "H264Decoder"
     }
 }

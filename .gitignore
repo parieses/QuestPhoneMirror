@@ -24,3 +24,6 @@ Thumbs.db
 
 # 调试用 Python 脚本（接收端/模拟发送端），不进版本库
 tools/qpm_receiver/
+
+# Agent 工作数据（记忆/日志），不进版本库
+.workbuddy/

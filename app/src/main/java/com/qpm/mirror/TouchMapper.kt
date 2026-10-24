@@ -5,7 +5,8 @@ import com.qpm.protocol.Proto
 
 /**
  * 把 SurfaceView 上的触摸/控制器点击映射成手机屏幕坐标。
- * Quest 控制器在 2D 应用里是单指针激光，先只支持单指点击与拖动。
+ * 接收端可以是任意设备：触摸屏/鼠标天然走单指针；Quest 控制器在 2D 应用里
+ * 也是单指针激光——三者都落在同一套单指点击与拖动逻辑里。
  */
 class TouchMapper(
     private val viewW: () -> Int,

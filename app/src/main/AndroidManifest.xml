@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 投屏期间禁止系统自动息屏（设置 SCREEN_OFF_TIMEOUT），需用户在设置里放行 -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- 文件浏览：读取发送端共享存储（API 30+ 需「所有文件访问」特殊授权） -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
         android:icon="@mipmap/ic_launcher"
@@ -31,13 +36,17 @@
             android:exported="false"
             android:screenOrientation="landscape" />
 
+        <activity
+            android:name=".FileBrowserActivity"
+            android:exported="false" />
+
         <service
             android:name=".CastService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
         <service
-            android:name="com.google.android.accessibility.selecttospeak.SelectToSpeakService"
+            android:name=".QpmControlService"
             android:exported="true"
             android:label="QPM 控制服务"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">

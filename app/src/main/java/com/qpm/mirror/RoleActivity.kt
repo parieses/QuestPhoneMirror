@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 
-/** 入口：选择本机角色。同一个 APK 装在手机和 Quest 上，各选一边。 */
+/** 入口：选择本机角色。同一个 APK 装在两台设备上（手机/头显/平板均可），各选一边。 */
 class RoleActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {

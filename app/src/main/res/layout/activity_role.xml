@@ -28,7 +28,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:gravity="center"
-        android:text="手机与 Quest 头显装同一份 App，各选一边角色"
+        android:text="两台设备装同一份 App，各选一边角色（手机、Quest、平板均可）"
         android:textColor="#A5B4FC"
         android:textSize="13sp" />
 
@@ -69,7 +69,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="手机选这个：录屏并推流到头显"
+                android:text="手机选这个：录屏并推流到接收端"
                 android:textColor="#A5B4FC"
                 android:textSize="13sp" />
         </LinearLayout>
@@ -112,7 +112,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Quest 头显选这个：自动搜索并显示手机画面"
+                android:text="接收端选这个：自动搜索并显示发送端画面"
                 android:textColor="#A5B4FC"
                 android:textSize="13sp" />
         </LinearLayout>

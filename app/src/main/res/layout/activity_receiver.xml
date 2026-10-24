@@ -3,8 +3,14 @@
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FF000000">
+    android:background="#FF0B1220">
 
+    <SurfaceView
+        android:id="@+id/surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 顶部手动连接栏：自动发现连上后隐藏，断开后恢复 -->
     <LinearLayout
         android:id="@+id/ipBar"
         android:layout_width="match_parent"
@@ -46,11 +52,73 @@
             android:textSize="14sp" />
     </LinearLayout>
 
-    <SurfaceView
-        android:id="@+id/surface"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+    <!-- 居中状态面板：搜索/连接/配对各阶段的引导都在这里，配对成功后隐藏 -->
+    <LinearLayout
+        android:id="@+id/statusPanel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/hint_bg"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingLeft="28dp"
+        android:paddingRight="28dp"
+        android:paddingTop="24dp"
+        android:paddingBottom="24dp">
 
+        <TextView
+            android:id="@+id/tvStage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="正在搜索发送端…"
+            android:textColor="#F1F5F9"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvStageHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_horizontal"
+            android:text="请先在手机上打开「我是发送端」并点开始投屏\n两端需连接同一个 Wi-Fi"
+            android:textColor="#A5B4FC"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/edtPair"
+            android:layout_width="220dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="@null"
+            android:gravity="center"
+            android:hint="输入 6 位配对码"
+            android:inputType="number"
+            android:letterSpacing="0.3"
+            android:maxLength="6"
+            android:maxLines="1"
+            android:textColor="#FFFFFFFF"
+            android:textColorHint="#99FFFFFF"
+            android:textSize="32sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btnPair"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/btn_secondary"
+            android:minWidth="0dp"
+            android:paddingLeft="28dp"
+            android:paddingRight="28dp"
+            android:text="配 对"
+            android:textColor="#22D3EE"
+            android:textSize="16sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- 底部瞬时提示（错误/配对反馈） -->
     <TextView
         android:id="@+id/hint"
         android:layout_width="wrap_content"
@@ -62,7 +130,22 @@
         android:paddingRight="16dp"
         android:paddingTop="10dp"
         android:paddingBottom="10dp"
-        android:text="等待发送端…"
+        android:text=""
+        android:textColor="#FFFFFFFF"
+        android:textSize="14sp" />
+
+    <!-- 文件浏览入口：浏览/下载发送端文件 -->
+    <Button
+        android:id="@+id/btnFiles"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:background="@drawable/btn_secondary"
+        android:minWidth="0dp"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:text="📁 文件"
         android:textColor="#FFFFFFFF"
         android:textSize="14sp" />
 </FrameLayout>

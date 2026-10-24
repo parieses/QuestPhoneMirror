@@ -54,7 +54,7 @@ jobs:
           ERR=$("$JAVA_HOME/bin/keytool" -list -keystore app/release.keystore -storepass "$KS_PASS" 2>&1 >/dev/null)
           if [ $? -ne 0 ]; then
             if echo "$ERR" | grep -qi "password"; then
-              echo "::error::密码不对。KEY_STORE_PASSWORD / KEY_PASSWORD 必须为 qpm-release-2026。请到 Secrets 核对这两个值。"
+              echo "::error::密钥库密码不正确。请到仓库 Settings → Secrets 核对 KEY_STORE_PASSWORD / KEY_PASSWORD（注意：不要把密码值写进任何文件或提示文案）。"
             else
               echo "::error::SIGNING_KEY 解码出的不是有效 keystore，说明 base64 被截断或混入杂质。请重新完整复制 SIGNING_KEY（约 3632 字符，解码后约 2700 字节）。"
             fi

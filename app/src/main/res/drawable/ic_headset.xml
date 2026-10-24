@@ -4,7 +4,7 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- 头显横梁 -->
+    <!-- 顶部横梁（显示设备图标，接收端角色选择用） -->
     <path
         android:pathData="M9,8 L15,8 A4,4 0 0 1 19,12 L19,12 A4,4 0 0 1 15,16 L9,16 A4,4 0 0 1 5,12 L5,12 A4,4 0 0 1 9,8 Z"
         android:strokeColor="#22D3EE"

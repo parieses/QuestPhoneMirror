@@ -1,9 +1,10 @@
-package com.google.android.accessibility.selecttospeak
+package com.qpm.mirror
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Bundle
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -11,23 +12,26 @@ import android.view.accessibility.AccessibilityNodeInfo
  * 接收端的点击/滑动最终由这里在本机（发送端）执行。
  * dispatchGesture 不需要 root，Android 7.0+ 可用。
  *
- * 类名/包名刻意伪装为 Google 系统组件
- * (com.google.android.accessibility.selecttospeak.SelectToSpeakService)，
- * 以绕过小米澎湃OS 对侧载应用无障碍服务的「可信类名白名单」静默过滤。
- * 实测：adb settings put / appops allow ACCESS_RESTRICTED_SETTINGS 均无法绕过该层过滤；
- * 而 gkd 等应用正是靠此手法让服务在「已下载的服务」中显示并可启用。
+ * 注意：本服务使用应用自身命名空间 com.qpm.mirror。
+ * 早期版本曾把类名伪装成 Google 系统组件以绕过小米澎湃OS 对侧载应用
+ * 无障碍服务的白名单过滤，现出于合规考虑已移除该做法。
+ * 若在小米/澎湃OS 的「已下载的服务」里看不到本服务，请按 README
+ * 「小米 / 澎湃OS 无障碍权限」章节用 adb 命令启用。
  */
-class SelectToSpeakService : AccessibilityService() {
+class QpmControlService : AccessibilityService() {
 
     companion object {
+        private const val TAG = "QpmControlService"
+
         @Volatile
-        var instance: SelectToSpeakService? = null
+        var instance: QpmControlService? = null
             private set
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        Log.i(TAG, "onServiceConnected: 服务已连接，反向控制可用")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
@@ -36,6 +40,7 @@ class SelectToSpeakService : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
+        Log.w(TAG, "onDestroy: 服务被回收，反向控制失效，直到系统重新拉起")
         super.onDestroy()
     }
 
@@ -59,8 +64,14 @@ class SelectToSpeakService : AccessibilityService() {
 
     /** 向当前焦点输入框写文字。 */
     fun sendText(text: String) {
-        val root = rootInActiveWindow ?: return
-        val focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
+        val root = rootInActiveWindow ?: run {
+            Log.w(TAG, "sendText: rootInActiveWindow 为 null（无活动窗口），丢弃")
+            return
+        }
+        val focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: run {
+            Log.w(TAG, "sendText: 当前没有聚焦的输入框，丢弃")
+            return
+        }
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
@@ -72,6 +83,7 @@ class SelectToSpeakService : AccessibilityService() {
             4 -> performGlobalAction(GLOBAL_ACTION_BACK)
             3 -> performGlobalAction(GLOBAL_ACTION_HOME)
             187 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+            else -> Log.w(TAG, "key: 不支持的 keycode=$keycode")
         }
     }
 }
