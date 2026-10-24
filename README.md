@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.15-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.16-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -170,7 +170,21 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 ## 📝 更新日志
 
-### v0.15（本轮）
+### v0.16（本轮）
+
+**修复**
+- **手机横屏必断投屏（真正根因）**：MediaProjection 的令牌一生只能 `createVirtualDisplay` 一次——Android 14 起第二次调用直接抛「Don't take multiple captures…」并**连带撤销整个录屏授权**（紧跟其后的 `Cannot create VirtualDisplay with non-current MediaProjection` 就是授权已被系统作废）。旧实现旋转时「release 旧虚拟显示 → 再建新的」，第二次创建必然失败、按旧尺寸回退再失败，只能 `stopAll` 断流。现改为**复用同一个虚拟显示**：新建编码器（编码器输入面尺寸在 configure 时固定，无法原地改）→ `setSurface` 把新输入面挂上去 → `resize` 改采集分辨率，三步全部成功才停旧编码器；任一步失败则把旧 surface 挂回去，旧流水线继续出画面
+- **接入 Android 14 `onCapturedContentResize`**：系统在采集内容真正变尺寸时（旋转、应用强制横屏、分屏拖动）直接告知新尺寸，与 DisplayListener、传感器两路互补，仍然统一走 120ms 防抖 + 尺寸核对
+- **编码器代际守卫细化**：区分「已分配代际」与「在职代际」，换面失败回滚时旧编码器继续出帧（此前回滚会让旧编码器的帧被代际守卫永久丢弃，表现为回滚后黑屏）
+- **防息屏原值污染**：上次异常退出没恢复系统息屏超时，值停在哨兵 `Int.MAX_VALUE`，下次启动把它当「用户原值」原样写回，手机从此永不自动熄屏（日志表现为「已恢复自动息屏时间：2147483647s」）。现原值持久化到 SharedPreferences，读到哨兵时保留历史原值，未知则恢复 1 分钟兜底
+- **接收端解码加固**：拿到 SPS/PPS 或首个关键帧之前不再把 P 帧塞进硬解（无参数集时部分机型在 native 层直接崩溃），并记录「收到 SPS/PPS / 首个关键帧 / 首个渲染帧」里程碑，便于精确定位崩溃发生在哪一步
+
+**新功能**
+- **进程退出记录**：启动时读取 Android 11+ 的进程退出历史（`ApplicationExitInfo`），把 `CRASH_NATIVE` / `ANR` / `LOW_MEMORY` 等原因码、状态与 Android 12+ 的 tombstone 全文写进 `crashes/exit-*.log`，诊断页可查看分享——专治「闪退回首页但日志里没有任何堆栈」这类 Java 层抓不到的退出
+
+* * *
+
+### v0.15
 
 **新功能**
 - **App 内诊断日志**：入口页新增「诊断日志」卡片——查看当天日志尾部、一键分享（经 FileProvider，可发微信/QQ）、查看/分享崩溃记录、清空当天。全模块日志统一走 `QpmLog` 双通道（logcat + `files/logs/qpm-日期.log`，同步写保证崩溃前最后几行落盘、保留 3 天、单文件 8MB 封顶），没有电脑也能抓 log
@@ -339,8 +353,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.15        # 版本号唯一来源就是 git tag
-git push origin v0.15
+git tag v0.16        # 版本号唯一来源就是 git tag
+git push origin v0.16
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**

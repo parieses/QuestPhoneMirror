@@ -184,6 +184,7 @@ class MirrorClient(
         var frameCount = 0
         var lastFrameLogAt = System.currentTimeMillis()
         var firstFrameLogged = false
+        var firstVideoLogged = false
 
         while (true) {
             // 不用 run { break }：非内联 lambda 里的 break/continue 是实验性语言特性，
@@ -212,6 +213,10 @@ class MirrorClient(
                     Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
                     Type.VIDEO_FRAME -> {
                         decoder?.feed(frame.body)
+                        if (!firstVideoLogged) {
+                            firstVideoLogged = true
+                            QpmLog.i(TAG, "收到首个视频帧 size=${frame.body.size}（此后每 3s 汇总一次）")
+                        }
                         frameCount++
                         val now = System.currentTimeMillis()
                         if (now - lastFrameLogAt >= 3000) {

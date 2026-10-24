@@ -75,6 +75,10 @@ class CastService : Service() {
         private const val MAX_PAIR_FAILS = 3
         private const val DEFAULT_BITRATE = 6_000_000
 
+        /** 防息屏原值的持久化键与兜底值（原值未知时恢复成 1 分钟）。 */
+        private const val KEY_ORIGINAL_TIMEOUT = "original_screen_off_timeout"
+        private const val DEFAULT_TIMEOUT_MS = 60_000
+
         /** 最近一次听到其他 QPM 发送端 beacon 的时间；0 表示从未听到。 */
         private val lastPeerSeen = AtomicLong(0L)
 
@@ -233,12 +237,23 @@ class CastService : Service() {
     private var lastFailedSize: Int = 0
 
     /**
-     * 编码器代际：每次 newEncoder 自增。旋转重建会停掉旧编码器，但其异步回调
-     * （onError/onFrame）可能晚于新编码器建成才触发——旧实现里一个迟到的 onError
-     * 会 post stopAll() 把刚建好的新流水线拆掉，表现为「一转屏投屏就断」。
-     * 代际不匹配的回调一律丢弃（onError 仅记日志）。
+     * 编码器代际计数器：每新建一个编码器分配一个唯一值。
+     *
+     * 旋转切换时旧编码器的异步回调（onError/onFrame）可能晚于新编码器建成才触发——
+     * 一个迟到的 onError 会 post stopAll() 把刚建好的新流水线拆掉。因此回调先比对
+     * 自己的代际是否等于 [activeGen]，不等于就丢弃。
      */
     private val encoderGen = AtomicLong(0)
+
+    /**
+     * 当前「在职」的编码器代际，-1 表示没有。
+     *
+     * 与 [encoderGen] 分开是必须的：新编码器建好但换 surface 失败回滚时，
+     * 旧编码器仍然有效——如果只用一个自增计数器，旧编码器的帧会因代际不匹配被
+     * 永久丢弃（表现为回滚后黑屏）。
+     */
+    @Volatile
+    private var activeGen: Long = -1
 
     override fun onCreate() {
         super.onCreate()
@@ -306,10 +321,22 @@ class CastService : Service() {
                 postStatus("录屏授权被系统撤销，投屏已停止")
                 stopAll()
             }
+
+            /**
+             * Android 14+ 在系统真正改变采集内容尺寸时（旋转、强制横屏、分屏拖动）
+             * 直接告知新尺寸，比自建 DisplayListener 更权威，也能覆盖「手机没转、
+             * App 自己 setRequestedOrientation 强制横屏」这类场景。
+             * 这里只当提醒用，真正的处理统一走 scheduleReconfigure（防抖 + 尺寸核对）。
+             */
+            override fun onCapturedContentResize(width: Int, height: Int) {
+                QpmLog.i(TAG, "系统报告采集内容尺寸变化：${width}x$height")
+                if (width > 0 && height > 0) scheduleReconfigure()
+            }
         }, null)
 
+        val gen = encoderGen.incrementAndGet()
         val enc = try {
-            newEncoder(videoW, videoH)
+            newEncoder(videoW, videoH, gen)
         } catch (e: Exception) {
             QpmLog.e(TAG, "编码器初始化失败: ${e.message}")
             postStatus("编码器初始化失败：${e.message ?: "本机不支持 H.264 硬编"}，投屏已停止")
@@ -317,6 +344,7 @@ class CastService : Service() {
             return
         }
         encoder = enc
+        activeGen = gen
         startStatsTicker()
 
         display = projection?.createVirtualDisplay(
@@ -343,12 +371,13 @@ class CastService : Service() {
         startRotationWatch()
     }
 
-    /** 按当前尺寸建编码器：onFrame 把帧塞进全部客户端的发送队列。 */
-    private fun newEncoder(w: Int, h: Int): H264Encoder {
-        // 每个编码器实例一个代际，重建/停止后迟到的回调按代际丢弃（见 encoderGen 注释）
-        val gen = encoderGen.incrementAndGet()
+    /**
+     * 按当前尺寸建编码器：onFrame 把帧塞进全部客户端的发送队列。
+     * [gen] 由调用方分配、成功接管后写进 [activeGen]——只有在职代际的帧/错误才处理。
+     */
+    private fun newEncoder(w: Int, h: Int, gen: Long): H264Encoder {
         return H264Encoder(w, h, currentBitrate, onFrame = { buf, size, flags, pts ->
-            if (gen == encoderGen.get()) {
+            if (gen == activeGen) {
                 val frame = Proto.videoFrame(pts, flags, buf, 0, size)
                 statFrames.incrementAndGet()
                 statBytes.addAndGet(size.toLong())
@@ -357,7 +386,7 @@ class CastService : Service() {
                 if (!accepted) statDropped.incrementAndGet()
             }
         }, onError = { msg ->
-            if (gen == encoderGen.get()) {
+            if (gen == activeGen) {
                 QpmLog.e(TAG, "编码器错误: $msg")
                 postStatus("编码器错误：$msg，投屏已停止")
                 // 不能在本线程直接调 codec.stop()（MediaCodec 回调内调用会崩溃），切主线程执行
@@ -429,11 +458,8 @@ class CastService : Service() {
     }
 
     /**
-     * 核对真实屏幕尺寸，不一致就按新尺寸重建 VirtualDisplay + 编码器，并广播新的 SCREEN_INFO。
-     *
-     * 顺序沿用「先拆旧、再建新」：个别 ROM 不允许同一个 MediaProjection 同时挂两个虚拟显示，
-     * 先建新的会拿不到句柄。代价是重建瞬间会黑一下，所以失败时必须能**按旧尺寸恢复**——
-     * 旧实现失败即 stopAll 断流，用户看到的就是「一转屏投屏就断了」。
+     * 核对真实屏幕尺寸，不一致就把画面切到新尺寸（复用虚拟显示，见 rebuildPipeline），
+     * 并广播新的 SCREEN_INFO 让接收端重排画面与触摸映射。
      */
     private fun reconfigureForRotation() {
         if (!running || reconfiguring) return
@@ -450,7 +476,7 @@ class CastService : Service() {
         val oldH = videoH
         val oldDpi = videoDpi
         try {
-            QpmLog.i(TAG, "屏幕尺寸变化：${oldW}x$oldH -> ${w}x$h，按新尺寸重建虚拟显示与编码器")
+            QpmLog.i(TAG, "屏幕尺寸变化：${oldW}x$oldH -> ${w}x$h，切换编码器尺寸")
             postStatus("屏幕方向变化，正在按 ${w}x$h 调整画面…")
             if (rebuildPipeline(w, h, m.densityDpi)) {
                 lastFailedSize = 0
@@ -462,11 +488,19 @@ class CastService : Service() {
                 broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, w, h) }.apply { start() }
                 return
             }
-            // 新尺寸建不出来：按旧尺寸恢复，宁可比例不对也别断流
-            QpmLog.w(TAG, "按 ${w}x$h 重建失败，尝试恢复 ${oldW}x$oldH")
             lastFailedSize = sizeKey
+            // 新实现里失败只可能发生在「新编码器建不出来」或「换 surface 失败且已回滚」，
+            // 此时旧流水线仍然完好——直接继续投屏，不要再去重建（旧实现这里会因重复
+            // createVirtualDisplay 把整个录屏授权搞挂，最终必然 stopAll 断流）
+            if (oldW == videoW && oldH == videoH && encoder != null && display != null) {
+                QpmLog.w(TAG, "按 ${w}x$h 切换失败，旧流水线仍在，继续以 ${oldW}x$oldH 投屏")
+                postStatus("按 ${w}x$h 调整失败（该尺寸可能不受本机编码器支持），继续以 ${oldW}x$oldH 投屏")
+                return
+            }
+            // 旧流水线也坏了：按旧尺寸再试一次，仍不行才停
+            QpmLog.w(TAG, "旧流水线已不可用，尝试按 ${oldW}x$oldH 恢复")
             if (oldW > 0 && oldH > 0 && rebuildPipeline(oldW, oldH, oldDpi)) {
-                postStatus("按 ${w}x$h 重建失败（该尺寸可能不受本机编码器支持），已恢复 ${oldW}x$oldH 继续投屏")
+                postStatus("按 ${w}x$h 调整失败，已恢复 ${oldW}x$oldH 继续投屏")
                 return
             }
             postStatus("画面重建失败，投屏已停止")
@@ -476,43 +510,60 @@ class CastService : Service() {
         }
     }
 
-    /** 拆掉当前显示与编码器，按给定尺寸重建。全部成功才返回 true 并更新 videoW/H。 */
+    /**
+     * 把画面切到新尺寸：**复用同一个 VirtualDisplay**，只换编码器输入 surface 并 resize。
+     *
+     * 关键约束：MediaProjection 的令牌一生只能 createVirtualDisplay 一次。Android 14 起
+     * 第二次调用直接抛「Don't take multiple captures by invoking MediaProjection#
+     * createVirtualDisplay multiple times on the same instance」，并连带撤销整个录屏授权
+     * （日志里紧随其后的「Cannot create VirtualDisplay with non-current MediaProjection」
+     * 就是授权已被系统作废）。旧实现「release 旧显示 → 再建新的」正是「一转屏投屏就断」
+     * 的真正根因，与编码器重建成败无关。
+     *
+     * 正确做法（也是 Android 14 官方推荐）：
+     *   ① 新建编码器（编码器的输入 surface 尺寸在 configure 时固定，无法原地改）；
+     *   ② 把新 surface 挂到既有虚拟显示上（setSurface），再改采集分辨率（resize）；
+     *   ③ 全部成功后才停旧编码器，失败则把旧 surface 挂回去保住旧流水线。
+     * 旧编码器的输入 surface 被摘下时可能回调 onError，由 encoderGen 代际守卫丢弃。
+     */
     private fun rebuildPipeline(w: Int, h: Int, dpi: Int): Boolean {
-        // 先停编码器、再释放显示：编码器运行中释放其输入 VirtualDisplay 会 abandon
-        // 输入 surface，MediaCodec 随即抛 onError——旧顺序「先 release 显示」正是
-        // 转屏断流的触发器（迟到的 onError 会 post stopAll 拆掉新流水线）
-        runCatching { encoder?.stop() }
-        encoder = null
-        runCatching { display?.release() }
-        display = null
+        val vd = display
+        val old = encoder
+        if (vd == null || old == null) {
+            QpmLog.e(TAG, "切换 ${w}x$h 失败：虚拟显示或编码器不存在")
+            return false
+        }
+
+        // ① 新编码器：其输入 surface 就绪后才能挂到虚拟显示上
+        val gen = encoderGen.incrementAndGet()
         val enc = try {
-            newEncoder(w, h)
+            newEncoder(w, h, gen)
         } catch (e: Exception) {
             QpmLog.e(TAG, "创建 ${w}x$h 编码器失败: ${e.message}")
             return false
         }
-        val vd = runCatching {
-            projection?.createVirtualDisplay(
-                "qpm-cast",
-                w,
-                h,
-                dpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                enc.inputSurface,
-                null,
-                null
-            )
-        }.onFailure { QpmLog.e(TAG, "创建 ${w}x$h 虚拟显示异常: ${it.message}") }.getOrNull()
-        if (vd == null) {
-            QpmLog.e(TAG, "创建 ${w}x$h 虚拟显示失败（返回 null）")
+
+        // ② 复用虚拟显示：换 surface + resize（绝不再 createVirtualDisplay）
+        val switched = runCatching {
+            vd.setSurface(enc.inputSurface)
+            vd.resize(w, h, dpi)
+        }.onFailure { QpmLog.e(TAG, "复用虚拟显示失败（${w}x$h）: ${it.message}") }.isSuccess
+        if (!switched) {
             runCatching { enc.stop() }
+            // 尽力把旧编码器的 surface 挂回去，宁可比例不对也别断流
+            runCatching { vd.setSurface(old.inputSurface) }
+                .onFailure { QpmLog.w(TAG, "旧 surface 回挂失败: ${it.message}") }
             return false
         }
+
+        // ③ 新流水线已接管，停旧编码器（迟到的回调由代际守卫丢弃）
+        runCatching { old.stop() }
         encoder = enc
-        display = vd
+        activeGen = gen
         videoW = w
         videoH = h
         videoDpi = dpi
+        QpmLog.i(TAG, "画面已切换到 ${w}x$h（复用同一虚拟显示）")
         return true
     }
 
@@ -608,6 +659,15 @@ class CastService : Service() {
         }
     }
 
+    /**
+     * 原始息屏超时要单独持久化：曾出现上次异常退出没恢复、系统值一直停在哨兵
+     * Int.MAX_VALUE，下次启动把哨兵当「用户原值」记录下来并原样写回，用户的手机
+     * 从此永不自动熄屏（日志表现为「已恢复自动息屏时间：2147483647s」）。
+     */
+    private val timeoutPrefs by lazy {
+        getSharedPreferences("qpm_screen_timeout", Context.MODE_PRIVATE)
+    }
+
     /** 投屏期间禁止系统自动息屏（MediaProjection 熄屏即停，详见 README）。 */
     private fun applyKeepAwake() {
         if (!keepAwake) return
@@ -617,28 +677,42 @@ class CastService : Service() {
             return
         }
         runCatching {
-            prevScreenOffTimeout = Settings.System.getInt(cr, Settings.System.SCREEN_OFF_TIMEOUT)
+            val cur = Settings.System.getInt(cr, Settings.System.SCREEN_OFF_TIMEOUT)
+            // 只有读到正常值才记录为原值；读到哨兵说明是历史遗留，保留之前存下的原值
+            if (cur != Int.MAX_VALUE) {
+                timeoutPrefs.edit().putInt(KEY_ORIGINAL_TIMEOUT, cur).apply()
+            }
+            prevScreenOffTimeout = timeoutPrefs.getInt(KEY_ORIGINAL_TIMEOUT, -1).takeIf { it > 0 }
             Settings.System.putInt(cr, Settings.System.SCREEN_OFF_TIMEOUT, Int.MAX_VALUE)
-            QpmLog.i(TAG, "已临时禁用自动息屏（原值 ${prevScreenOffTimeout}s）")
+            QpmLog.i(TAG, "已临时禁用自动息屏（原值 ${prevScreenOffTimeout ?: "未知"}ms）")
         }.onFailure {
             postStatus("防息屏设置失败：${it.message}")
         }
     }
 
     private fun restoreScreenOffTimeout() {
-        val t = prevScreenOffTimeout ?: return
+        val saved = prevScreenOffTimeout
+            ?: timeoutPrefs.getInt(KEY_ORIGINAL_TIMEOUT, -1).takeIf { it > 0 }
         prevScreenOffTimeout = null
+        val cur = runCatching {
+            Settings.System.getInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT)
+        }.getOrDefault(-1)
+        // 原值未知且系统仍停在哨兵值：历史版本异常退出留下的，恢复成 1 分钟兜底，
+        // 否则用户手机会永远不自动熄屏
+        val target = saved ?: if (cur == Int.MAX_VALUE) DEFAULT_TIMEOUT_MS else null
+        if (target == null || target == cur) return
         runCatching {
-            Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, t)
-            QpmLog.i(TAG, "已恢复自动息屏时间：${t}s")
+            Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, target)
+            timeoutPrefs.edit().remove(KEY_ORIGINAL_TIMEOUT).apply()
+            QpmLog.i(TAG, "已恢复自动息屏时间：${target}ms")
         }
     }
 
     private fun stopAll() {
         running = false
         reconfiguring = false
-        // 作废编码器代际：停止过程中旧编码器迟到的 onError/onFrame 不再触发任何动作
-        encoderGen.incrementAndGet()
+        // 作废在职代际：停止过程中旧编码器迟到的 onError/onFrame 不再触发任何动作
+        activeGen = -1
         currentPairCode = null
         lastPeerSeen.set(0L)
         stopRotationWatch()

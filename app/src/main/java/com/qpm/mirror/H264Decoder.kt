@@ -26,6 +26,14 @@ class H264Decoder(
     @Volatile
     private var alive = true
 
+    // 里程碑标记：拿到参数集/关键帧之前绝不能往硬解里塞 P 帧——
+    // 没有 SPS/PPS 时部分机型的硬解会在 native 层直接崩溃（Java 层捕获不到，
+    // 表现为「配对成功后进程消失、没有任何堆栈」）。
+    private var sawCsd = false
+    private var sawKey = false
+    private var loggedFirstRender = false
+    private var droppedEarly = 0
+
     // 异步模式下输入缓冲由 onInputBufferAvailable 回调分配，必须入队后再由 feed() 取用；
     // 不能依赖 dequeueInputBuffer（异步模式下它不等待、直接返回 -1，会导致帧全丢、画面黑屏）。
     private val availableInput = ArrayDeque<Int>()
@@ -49,7 +57,13 @@ class H264Decoder(
             // 回调线程未捕获异常会直接杀进程——全部兜底
             if (info.size > 0) {
                 val rendered = runCatching { codec.releaseOutputBuffer(index, true) }.isSuccess
-                if (rendered) decodedFrames.incrementAndGet()
+                if (rendered) {
+                    decodedFrames.incrementAndGet()
+                    if (!loggedFirstRender) {
+                        loggedFirstRender = true
+                        QpmLog.i(TAG, "首个输出帧已渲染到 Surface")
+                    }
+                }
             } else {
                 runCatching { codec.releaseOutputBuffer(index, false) }
             }
@@ -78,6 +92,7 @@ class H264Decoder(
                 0
             )
             codec.start()
+            QpmLog.i(TAG, "解码器已启动（等待 SPS/PPS 与首个关键帧）")
         } catch (e: Exception) {
             QpmLog.e(TAG, "初始化失败: ${e.message}")
             alive = false
@@ -95,6 +110,23 @@ class H264Decoder(
         val data = ByteArray(body.size - 9)
         System.arraycopy(body, 9, data, 0, data.size)
 
+        val isConfig = flags and VFlag.CONFIG != 0
+        val isKey = flags and VFlag.KEY != 0
+        // 拿到 SPS/PPS（或首个 IDR，参数集可能内联在 IDR 里）之前，P 帧对解码器毫无意义：
+        // 往没有参数集的硬解里塞 P 帧，部分机型会在 native 层直接崩溃，Java 层拦不住
+        if (!sawCsd && !sawKey && !isConfig && !isKey) {
+            if (droppedEarly++ == 0) QpmLog.w(TAG, "参数集到达前收到 P 帧，先丢弃（避免硬解 native 崩溃）")
+            return
+        }
+        if (isConfig && !sawCsd) {
+            sawCsd = true
+            QpmLog.i(TAG, "收到首个 SPS/PPS（${data.size} 字节）")
+        }
+        if (isKey && !sawKey) {
+            sawKey = true
+            QpmLog.i(TAG, "收到首个关键帧（${data.size} 字节）")
+        }
+
         // 异步模式下不能用 dequeueInputBuffer（不等待、直接返回 -1），必须从回调入队的空闲缓冲里取
         val index = synchronized(availableInput) { availableInput.removeFirstOrNull() }
             ?: return  // 暂无空闲输入缓冲，丢弃该帧以保流畅（不阻塞网络线程）
@@ -102,8 +134,8 @@ class H264Decoder(
         buffer.clear()
 
         var f = 0
-        if (flags and VFlag.KEY != 0) f = f or MediaCodec.BUFFER_FLAG_KEY_FRAME
-        if (flags and VFlag.CONFIG != 0) f = f or MediaCodec.BUFFER_FLAG_CODEC_CONFIG
+        if (isKey) f = f or MediaCodec.BUFFER_FLAG_KEY_FRAME
+        if (isConfig) f = f or MediaCodec.BUFFER_FLAG_CODEC_CONFIG
         if (data.size <= buffer.capacity()) {
             buffer.put(data)
             runCatching { codec.queueInputBuffer(index, 0, data.size, pts, f) }
