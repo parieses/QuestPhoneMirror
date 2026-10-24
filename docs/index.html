@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QPM 手机镜像 — Quest 头显 × 安卓手机互投屏</title>
-<meta name="description" content="一个 APK 双角色：手机装上是发送端，Quest 装上是接收端。手机画面实时镜像进头显，并能反向操作手机。免 PC、免公网、免 root。">
+<title>QPM 手机镜像 — 手机投屏到 Quest / 手机 / 平板 / 电脑端</title>
+<meta name="description" content="一个 APK 双角色：手机装上是发送端，Quest、另一台手机平板、或实现了协议的电脑端作为接收端。画面实时镜像，并能反向操作手机。免 PC、免公网、免 root。">
 <style>
   :root {
     --brand: #4F46E5;
@@ -252,9 +252,9 @@
 <header>
   <div class="wrap hero">
     <div>
-      <span class="tag"><span class="dot"></span>v0.1 已发布 · 开源 · 免 root</span>
-      <h1>把手机装进 <span class="grad">Quest 头显</span><br>还能反过来操作它</h1>
-      <p class="sub">一个 APK 双角色：装在手机上是发送端，装在 Quest 上是接收端。画面实时镜像进头显，头显里的点击、滑动、输入会真实作用到手机上。免 PC、免公网、免账号，两端同一 Wi-Fi 即用。</p>
+      <span class="tag"><span class="dot"></span>v0.9 已发布 · 开源 · 免 root</span>
+      <h1>把手机投到 <span class="grad">任意设备</span><br>还能反过来操作它</h1>
+      <p class="sub">一个 APK 双角色：装在手机上是发送端，Quest 头显、另一台手机平板、或任何实现了本协议的电脑端作为接收端。画面实时镜像，接收端上的点击、滑动、输入会真实作用到手机上。免 PC、免公网、免账号，两端同一 Wi-Fi 即用。</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/parieses/QuestPhoneMirror/releases/latest" target="_blank" rel="noopener">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16"/></svg>
@@ -267,7 +267,7 @@
       </div>
       <div class="meta">
         <span>协议 <b>MediaProjection + H.264</b></span>
-        <span>平台 <b>Android / Quest 2·3·3S·Pro</b></span>
+        <span>接收端 <b>Quest / 手机 / 平板 / 电脑</b></span>
         <span>许可 <b>MIT</b></span>
       </div>
     </div>
@@ -295,7 +295,7 @@
               <path d="M20 10h2v3a2 2 0 0 1-2 2v-5z" fill="#7C3AED"/>
               <rect x="10" y="9.5" width="4" height="3" rx="1.5" fill="#22D3EE"/>
             </svg>
-            <div class="art-label"><b>Quest</b>接收端</div>
+            <div class="art-label"><b>接收端</b>Quest / 手机 / 电脑</div>
           </div>
         </div>
         <div class="art-foot">H.264 硬编推流 · UDP 自动发现 · 手势回传控制</div>
@@ -314,13 +314,18 @@
     <div class="grid">
       <div class="feat">
         <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="3" width="10" height="13" rx="2"/><path d="M12 19.5v.01"/><path d="M9.5 6.5a2.6 2.6 0 0 1 5 0"/><path d="M7 4a4.8 4.8 0 0 1 10 0" opacity=".55"/></svg></div>
-        <h3>实时镜像</h3>
-        <p>1080p30 H.264 硬编硬解，默认 8.3Mbps，弱网环境可调低码率保流畅。</p>
+        <h3>实时镜像 · 画质三档</h3>
+        <p>1080p30 H.264 硬编硬解，流畅 4M / 均衡 6M / 高清 10M 三档码率，弱网切流畅即用。</p>
       </div>
       <div class="feat">
         <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="2.2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.5 5.5a9.3 9.3 0 0 0 0 13M18.5 5.5a9.3 9.3 0 0 1 0 13"/></svg></div>
-        <h3>自动发现</h3>
-        <p>手机每秒 UDP 广播，头显打开即连，全程不用输入 IP、不用扫码配对。</p>
+        <h3>自动发现 · 免密直连</h3>
+        <p>UDP 广播打开即连，不用输 IP。局域网只有一个发送端时无需配对码直接出画面。</p>
+      </div>
+      <div class="feat">
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15" r="1.4" fill="#22D3EE"/></svg></div>
+        <h3>配对码 · 连接管理</h3>
+        <p>每次投屏 6 位随机码；发送端可扫描局域网接收端列表，勾选放行、踢人即时生效。</p>
       </div>
       <div class="feat">
         <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11.5V5.5a2 2 0 0 1 4 0v6"/><path d="M13 9.5a2 2 0 0 1 4 0v4.5a6 6 0 0 1-6 6h-1a6 6 0 0 1-6-6v-2a2 2 0 0 1 4 0"/></svg></div>
@@ -328,19 +333,14 @@
         <p>点击、拖动、文字输入、Home / 返回 / 多任务，走无障碍手势，全机型免 root。</p>
       </div>
       <div class="feat">
-        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 12h5l1.5-2h5L16 12h5"/></svg></div>
-        <h3>画面自适应</h3>
-        <p>按手机真实宽高比居中缩放，不拉伸不变形，横竖屏自动适配。</p>
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/><path d="M12 11v6m0 0l-2.5-2.5M12 17l2.5-2.5" opacity=".8"/></svg></div>
+        <h3>文件浏览</h3>
+        <p>接收端浏览发送端共享存储：图片 / 文本应用内预览，其他文件分片下载到本机。</p>
       </div>
       <div class="feat">
-        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><path d="M13 2L4.5 13.5H11L10 22l8.5-11.5H12L13 2z"/></svg></div>
-        <h3>秒开画面</h3>
-        <p>新客户端接入立即请求关键帧，不用干等 1 秒 IDR 间隔。</p>
-      </div>
-      <div class="feat">
-        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h10M4 12h13M4 18h7"/><path d="M17 15l3 3-3 3" opacity=".7"/></svg></div>
-        <h3>延迟优先</h3>
-        <p>发送队列深度 3，满了主动丢旧帧——卡顿时优先保新鲜度。</p>
+        <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg></div>
+        <h3>投屏保活 · 防息屏</h3>
+        <p>投屏期间自动禁用系统熄屏，退出恢复原值；两端常亮，不用盯着屏幕防它黑掉。</p>
       </div>
     </div>
   </div>
@@ -381,9 +381,9 @@
         <line x1="355" y1="205" x2="225" y2="205" stroke="#C084FC" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#arr)"/>
         <text x="290" y="228" text-anchor="middle" fill="#C084FC" font-size="12.5">点击 / 滑动 / 输入</text>
 
-        <!-- 头显端 -->
+        <!-- 接收端 -->
         <rect x="360" y="40" width="200" height="220" rx="18" fill="#1A1836" stroke="#37346B"/>
-        <text x="460" y="72" text-anchor="middle" fill="#F1F5F9" font-size="16" font-weight="700">Quest · 接收端</text>
+        <text x="460" y="72" text-anchor="middle" fill="#F1F5F9" font-size="16" font-weight="700">接收端 · 任意设备</text>
         <rect x="385" y="90" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
         <text x="460" y="116" text-anchor="middle" fill="#A5B4FC" font-size="13">UDP 45555 自动发现</text>
         <rect x="385" y="142" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
@@ -394,14 +394,14 @@
         <!-- 无障碍回传 -->
         <line x1="565" y1="205" x2="640" y2="205" stroke="#C084FC" stroke-width="2.5" stroke-dasharray="6 5"/>
         <rect x="645" y="150" width="190" height="110" rx="16" fill="#14112E" stroke="#7C3AED" stroke-opacity=".6"/>
-        <text x="740" y="180" text-anchor="middle" fill="#F1F5F9" font-size="14" font-weight="700">ControlService</text>
+        <text x="740" y="180" text-anchor="middle" fill="#F1F5F9" font-size="14" font-weight="700">QpmControlService</text>
         <text x="740" y="204" text-anchor="middle" fill="#A5B4FC" font-size="12">无障碍服务 dispatchGesture</text>
         <text x="740" y="226" text-anchor="middle" fill="#64748B" font-size="11.5">模拟点击/滑动/输入 · 免 root</text>
         <line x1="740" y1="150" x2="740" y2="130" stroke="#7C3AED" stroke-width="2" stroke-dasharray="4 4"/>
         <path d="M740 130 h-215" stroke="#7C3AED" stroke-width="2" stroke-dasharray="4 4" fill="none" marker-end="url(#arr)"/>
         <text x="640" y="122" text-anchor="middle" fill="#C4B5FD" font-size="11.5">手势回传执行</text>
       </svg>
-      <div class="flow-note">两端只走局域网：UDP 45555 广播发现，TCP 45556 单连接双向复用，不上传任何数据到公网。</div>
+      <div class="flow-note">两端只走局域网：UDP 45555 双 beacon（发送端宣告 + 接收端宣告），TCP 45556 单连接双向复用，不上传任何数据到公网。</div>
     </div>
   </div>
 </section>
@@ -413,7 +413,7 @@
       <h2>四步上手</h2>
       <p>首次配置约 5 分钟，之后打开即连。</p>
     </div>
-    <div class="steps">
+      <div class="steps">
       <div class="step-card">
         <span class="role">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="7" y="3" width="10" height="18" rx="2"/></svg>
@@ -423,15 +423,15 @@
         <ol>
           <li><b>装 APK</b> —— 直接装，无需任何额外设置</li>
           <li>打开 App →「我是发送端」→ 点<b>开始投屏</b>，授予录屏权限</li>
-          <li>点<b>「开启控制权限（无障碍）」</b>，在系统设置里启用「QPM 控制服务」</li>
+          <li>页面显示 <b>6 位配对码</b>；点<b>「开启控制权限（无障碍）」</b>，在系统设置里启用「QPM 控制服务」</li>
           <li>保持 App 在前台，并在系统设置里允许其<b>后台运行</b></li>
         </ol>
-        <div class="tip">第 3 步是关键：不开无障碍，头显那边只能看、不能操作手机。</div>
+        <div class="tip">第 3 步是关键：不开无障碍，接收端那边只能看、不能操作手机。局域网只有一台发送端时，接收端可免配对码直连。</div>
       </div>
       <div class="step-card">
         <span class="role violet">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7h8a4 4 0 0 1 0 8H8a4 4 0 0 1 0-8z"/><path d="M2 10h2v5H2zM20 10h2v5h-2z"/></svg>
-          Quest · 接收端
+          Quest · 侧载
         </span>
         <h3>开发者模式侧载</h3>
         <ol>
@@ -440,9 +440,9 @@
           <li>USB 连 Quest，头显内弹窗点<b>允许 USB 调试</b></li>
           <li><b>adb install -r app-debug.apk</b>，然后在「资料库 → 未知来源」里启动</li>
         </ol>
-        <div class="tip">侧载应用不会出现在 Quest 主页桌面，这是 Meta 的机制，不是安装失败。</div>
+        <div class="tip">侧载应用不会出现在 Quest 主页桌面，这是 Meta 的机制，不是安装失败。接收端也可以是任意 Android 手机/平板（直接装同一 APK），或按 README 协议文档实现的电脑端。</div>
       </div>
-    </div>
+      </div>
   </div>
 </section>
 
@@ -457,11 +457,23 @@
       <p>侧载应用按 Meta 设计不出现在主页桌面。头显内进「资料库 → 右上角筛选 → <b>未知来源</b>」即可找到。</p>
     </details>
     <details>
+      <summary>接收端一定要 Quest 吗？能投到电脑或其他手机？</summary>
+      <p>不限定。接收端可以是 Quest 2/3/3S/Pro、任意 Android 7.0+ 手机或平板（装同一 APK 选「我是接收端」），也可以是任何按 README 协议文档实现的电脑端——协议完全开放，约 150 行即可对接。</p>
+    </details>
+    <details>
+      <summary>配对码是什么？每次都要输吗？</summary>
+      <p>每次点「开始投屏」会生成新的 6 位随机码，接收端输入正确才开始推流。局域网内只有一台发送端时自动免密直连、无需输入；检测到多个发送端才需要选设备 + 输码。</p>
+    </details>
+    <details>
+      <summary>有多台 Quest / 手机同时连着，怎么管理？</summary>
+      <p>打开发送端页面的「连接管理」→「扫描接收端」，会列出局域网内所有接收端（设备名 + IP + 连接状态），勾选即放行；取消勾选会立即断开该设备，对方收到提示，重新勾选即恢复。</p>
+    </details>
+    <details>
       <summary>连上了但只能看，点不动手机？</summary>
       <p>手机端没开无障碍权限。去发送端页点「开启控制权限（无障碍）」，在系统设置里启用「QPM 控制服务」。</p>
     </details>
     <details>
-      <summary>头显一直搜不到发送端？</summary>
+      <summary>接收端一直搜不到发送端？</summary>
       <p>确认两端连同一路由器同一网段；路由器若开了 AP 隔离或手机开热点，都会阻断 UDP 广播。</p>
     </details>
     <details>
@@ -476,6 +488,10 @@
       <summary>延迟大概多少？能玩游戏用吗？</summary>
       <p>局域网内硬编硬解端到端约 40–90ms，看通知、回消息、演示操作都够用；不适用于对帧率敏感的竞技场景。</p>
     </details>
+    <details>
+      <summary>接收端能看发送机的文件吗？</summary>
+      <p>能。先在发送端页面点「授予文件访问权限」，接收端左下角「📁 文件」即可浏览共享存储：图片和文本直接预览，其他文件下载到本机。文件传输走独立连接、独立配对，不与视频抢带宽。</p>
+    </details>
   </div>
 </section>
 
@@ -486,11 +502,12 @@
       <h2>已知限制</h2>
     </div>
     <div class="limits">
-      <span>手机熄屏即断，需保持亮屏</span>
+      <span>手机熄屏即断，已提供防息屏开关缓解</span>
       <span>DRM 内容（Netflix 等）黑屏</span>
-      <span>头显控制器为单指针，暂无双指缩放</span>
-      <span>头显端是 2D 面板，非 VR 原生悬浮面板</span>
-      <span>无鉴权，仅限可信局域网</span>
+      <span>控制器 / 触摸 / 鼠标均为单指针，暂无双指缩放</span>
+      <span>Quest 端是 2D 面板，非 VR 原生悬浮面板</span>
+      <span>控制通道零鉴权，仅限可信局域网</span>
+      <span>Android 10 发送端受 scoped storage 限制，文件可访问范围收窄</span>
     </div>
   </div>
 </section>
@@ -499,13 +516,13 @@
   <div class="wrap">
     <div class="final">
       <h2>现在就试试</h2>
-      <p>下载 APK，手机和 Quest 各装一份，同一 Wi-Fi 下四步上手。</p>
+      <p>下载 APK，两台设备各装一份，同一 Wi-Fi 下四步上手——接收端可以是 Quest、手机、平板或电脑。</p>
       <div class="cta" style="justify-content: center;">
         <a class="btn btn-primary" href="https://github.com/parieses/QuestPhoneMirror/releases/latest" target="_blank" rel="noopener">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16"/></svg>
-          下载 v0.1
+          下载 v0.9
         </a>
-        <a class="btn btn-ghost" href="https://github.com/parieses/QuestPhoneMirror" target="_blank" rel="noopener">阅读文档</a>
+        <a class="btn btn-ghost" href="https://github.com/parieses/QuestPhoneMirror#接入自定义接收端" target="_blank" rel="noopener">协议对接文档</a>
       </div>
     </div>
   </div>
