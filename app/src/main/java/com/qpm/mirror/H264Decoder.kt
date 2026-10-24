@@ -46,18 +46,21 @@ class H264Decoder(
                 runCatching { codec.releaseOutputBuffer(index, false) }
                 return
             }
+            // releaseOutputBuffer 在 codec 已停止/出错时会抛 IllegalStateException，
+            // 回调线程未捕获异常会直接杀进程——全部兜底
             if (info.size > 0) {
-                codec.releaseOutputBuffer(index, true)
-                decodedFrames.incrementAndGet()
-            } else codec.releaseOutputBuffer(index, false)
+                val rendered = runCatching { codec.releaseOutputBuffer(index, true) }.isSuccess
+                if (rendered) decodedFrames.incrementAndGet()
+            } else {
+                runCatching { codec.releaseOutputBuffer(index, false) }
+            }
         }
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             if (!alive) return
-            onVideoSize(
-                format.getInteger(MediaFormat.KEY_WIDTH),
-                format.getInteger(MediaFormat.KEY_HEIGHT)
-            )
+            val w = runCatching { format.getInteger(MediaFormat.KEY_WIDTH) }.getOrNull() ?: return
+            val h = runCatching { format.getInteger(MediaFormat.KEY_HEIGHT) }.getOrNull() ?: return
+            onVideoSize(w, h)
         }
 
         override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
@@ -96,14 +99,22 @@ class H264Decoder(
         // 异步模式下不能用 dequeueInputBuffer（不等待、直接返回 -1），必须从回调入队的空闲缓冲里取
         val index = synchronized(availableInput) { availableInput.removeFirstOrNull() }
             ?: return  // 暂无空闲输入缓冲，丢弃该帧以保流畅（不阻塞网络线程）
-        val buffer = codec.getInputBuffer(index) ?: return
+        val buffer = runCatching { codec.getInputBuffer(index) }.getOrNull() ?: return
         buffer.clear()
-        buffer.put(data)
 
         var f = 0
         if (flags and VFlag.KEY != 0) f = f or MediaCodec.BUFFER_FLAG_KEY_FRAME
         if (flags and VFlag.CONFIG != 0) f = f or MediaCodec.BUFFER_FLAG_CODEC_CONFIG
-        runCatching { codec.queueInputBuffer(index, 0, data.size, pts, f) }
+        if (data.size <= buffer.capacity()) {
+            buffer.put(data)
+            runCatching { codec.queueInputBuffer(index, 0, data.size, pts, f) }
+        } else {
+            // 个别机型/高分辨率下输入缓冲小于关键帧：丢载荷但必须归还缓冲，
+            // 否则缓冲池逐个泄漏、最终无缓冲可用永久黑屏；同时绝不让 BufferOverflowException
+            // 逃逸到网络线程把整条连接打断（表现为「配对成功后立马断」）
+            Log.w(TAG, "输入缓冲不足，丢弃 ${data.size} 字节帧（容量 ${buffer.capacity()}）")
+            runCatching { codec.queueInputBuffer(index, 0, 0, pts, 0) }
+        }
     }
 
     fun stop() {

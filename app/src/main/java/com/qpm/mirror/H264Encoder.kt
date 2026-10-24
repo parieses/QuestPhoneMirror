@@ -73,13 +73,13 @@ class H264Encoder(
         ) {
             val buffer = codec.getOutputBuffer(index)
             if (buffer == null || info.size <= 0) {
-                codec.releaseOutputBuffer(index, false)
+                runCatching { codec.releaseOutputBuffer(index, false) }
                 return
             }
             val out = ByteArray(info.size)
             buffer.position(info.offset)
             buffer.get(out)
-            codec.releaseOutputBuffer(index, false)
+            runCatching { codec.releaseOutputBuffer(index, false) }
 
             val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
             val isKey = (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0

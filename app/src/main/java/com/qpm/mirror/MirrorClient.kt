@@ -121,9 +121,10 @@ class MirrorClient(
         var pending: Frame? = null
         val reader = FrameReader(s.getInputStream())
 
-        // 关键：设备名（HELLO）必须在密钥交换握手之前以明文发送。
-        // 否则它会占用加密计数器槽位，导致发送端解密 PAIR 帧时 nonce 错位（期望 0、实为 1），
-        // GCM 校验失败 → 发送端永不调用 handlePair → 接收端永远卡在「正在配对」。
+        // 关键：设备名（HELLO）必须在密钥交换握手之前以明文发送。发送端在握手循环里
+        // 内联消费它（不过 channel.open），双方加解密计数器从 0 起严格对齐；
+        // 若把它放到握手后加密发送，它会占用计数器槽位导致后续帧 nonce 错位、
+        // GCM 校验失败，表现为「卡在正在配对」。
         if (helloName.isNotBlank()) writeCipher(Proto.hello(helloName))
 
         // 密钥交换握手：先发本方 EC(secp256r1) 临时公钥（明文，KEY_EXCHANGE 帧永不被加密）。
@@ -131,7 +132,10 @@ class MirrorClient(
         if (cryptoEnabled) {
             val kp = runCatching { Crypto.newKeyPair() }.getOrNull()
             if (kp != null) {
-                runCatching { out?.write(Proto.keyExchange(kp.publicEncoded)) }
+                // KE 必须明文直写；与 writeCipher 共用 channel 监视器，保证帧边界完整
+                synchronized(channel) {
+                    runCatching { out?.write(Proto.keyExchange(kp.publicEncoded)) }
+                }
                 // 预读一帧：期望对端 KE；设短超时，超时/非 KE 即回落明文（兼容旧版发送端）。
                 runCatching { s.soTimeout = 1500 }
                 val first = runCatching { reader.read() }.getOrNull()
@@ -170,29 +174,35 @@ class MirrorClient(
             val raw = pending ?: (reader.read() ?: break)
             pending = null
             val frame = channel.open(raw)
-            when (frame.type) {
-                Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
-                Type.VIDEO_FRAME -> decoder?.feed(frame.body)
-                Type.SCREEN_INFO -> {
-                    val (w, h, dpi) = Decoders.screenInfo(frame)
-                    phoneScreenW = w
-                    phoneScreenH = h
-                    onScreenInfo(w, h, dpi)
+            // 单帧处理兜底：解码/回调异常只丢这一帧并记日志，
+            // 绝不让异常逃逸到网络线程把整条连接打断（表现为「配对成功后立马断」）
+            try {
+                when (frame.type) {
+                    Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
+                    Type.VIDEO_FRAME -> decoder?.feed(frame.body)
+                    Type.SCREEN_INFO -> {
+                        val (w, h, dpi) = Decoders.screenInfo(frame)
+                        phoneScreenW = w
+                        phoneScreenH = h
+                        onScreenInfo(w, h, dpi)
+                    }
+                    Type.PAIR_RESULT -> onPairResult(Decoders.pairResultOf(frame))
+                    Type.FILE_LIST_RES -> onFileList(Decoders.fileEntriesOf(frame))
+                    Type.FILE_DATA -> onFileData(Decoders.fileDataOf(frame))
+                    Type.FILE_ERROR -> onFileError(Decoders.pathOf(frame))
+                    Type.REJECT -> {
+                        // 发送端主动拒绝（未在白名单），回调后等对端断开
+                        onRejected(Decoders.textOf(frame))
+                    }
+                    Type.CLIPBOARD -> onClipboard(Decoders.clipboardOf(frame))
+                    Type.FILE_PUSH_RES -> {
+                        val (ok, msg) = Decoders.filePushResOf(frame)
+                        onFilePushResult(ok, msg)
+                    }
+                    Type.STATS -> onStats(Decoders.statsOf(frame))
                 }
-                Type.PAIR_RESULT -> onPairResult(Decoders.pairResultOf(frame))
-                Type.FILE_LIST_RES -> onFileList(Decoders.fileEntriesOf(frame))
-                Type.FILE_DATA -> onFileData(Decoders.fileDataOf(frame))
-                Type.FILE_ERROR -> onFileError(Decoders.pathOf(frame))
-                Type.REJECT -> {
-                    // 发送端主动拒绝（未在白名单），回调后等对端断开
-                    onRejected(Decoders.textOf(frame))
-                }
-                Type.CLIPBOARD -> onClipboard(Decoders.clipboardOf(frame))
-                Type.FILE_PUSH_RES -> {
-                    val (ok, msg) = Decoders.filePushResOf(frame)
-                    onFilePushResult(ok, msg)
-                }
-                Type.STATS -> onStats(Decoders.statsOf(frame))
+            } catch (e: Exception) {
+                Log.w(TAG, "帧处理异常 type=${frame.type}: ${e.message}")
             }
         }
     }

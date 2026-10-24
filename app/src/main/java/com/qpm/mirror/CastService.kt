@@ -157,7 +157,8 @@ class CastService : Service() {
     fun broadcastClipboard(text: String) {
         if (text.isEmpty()) return
         val frame = Proto.clipboard(text)
-        instanceRef?.clients?.forEach { it.sendReliable(frame) }
+        // 只发给已配对接收端：未配对连接不应收到剪贴板内容
+        instanceRef?.clients?.forEach { if (it.paired) it.sendReliable(frame) }
     }
 
         /**
@@ -429,15 +430,20 @@ class CastService : Service() {
                 } catch (_: InterruptedException) {
                     break
                 }
-                val frames = statFrames.getAndSet(0)
-                val bytes = statBytes.getAndSet(0)
-                val dropped = statDropped.getAndSet(0)
-                val bitrate = (bytes * 8).toInt() // bits per second
-                val m = realMetrics()
-                val stats = Proto.stats(
-                    frames.toInt(), bitrate, m.widthPixels, m.heightPixels, dropped.toInt()
-                )
-                clients.forEach { if (it.paired) it.sendReliable(stats) }
+                // 快照与广播整体兜底：任何异常只记日志，绝不让统计线程裸奔杀进程
+                try {
+                    val frames = statFrames.getAndSet(0)
+                    val bytes = statBytes.getAndSet(0)
+                    val dropped = statDropped.getAndSet(0)
+                    val bitrate = (bytes * 8).toInt() // bits per second
+                    val m = realMetrics()
+                    val stats = Proto.stats(
+                        frames.toInt(), bitrate, m.widthPixels, m.heightPixels, dropped.toInt()
+                    )
+                    clients.forEach { if (it.paired) it.sendReliable(stats) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "统计广播异常: ${e.message}")
+                }
             }
         }.apply { start() }
     }
@@ -657,29 +663,49 @@ class CastService : Service() {
         private fun readLoop() {
             try {
                 val reader = FrameReader(socket.getInputStream())
-                // 首帧来自接收端：期望 KEY_EXCHANGE；否则回落明文（兼容旧版接收端）。
-                // 先发本方 KE（明文），再武装——保证 KEY_EXCHANGE 帧永不被加密。
+                // 握手阶段：v0.13 接收端连上后先明文发 HELLO（设备名），紧接着明文发 KEY_EXCHANGE
+                // （临时公钥）；旧版/无加密对端则不发 KE。这里循环消费握手帧：
+                // - HELLO：握手前必为明文，立即记录设备名（主循环不再见到它，避免武装后误解密）；
+                // - KEY_EXCHANGE：回发本方 KE（明文）后武装，之后帧体全部 AES-GCM；
+                // - 超时 / EOF / 协议外帧：回落明文，pending 帧由主循环按明文分发。
+                // 握手前的帧一律不过 channel.open，保证加解密计数器从 0 严格对齐。
                 var pending: Frame? = null
-                val first = reader.read() ?: return
-                if (first.type == Type.KEY_EXCHANGE) {
-                    val kp = runCatching { Crypto.newKeyPair() }.getOrNull()
-                    val session = if (kp != null) runCatching { Crypto.deriveSessionKey(kp, first.body) }.getOrNull() else null
-                    if (kp != null && session != null) {
-                        // 先发本方 KE（明文），再武装——保证 KEY_EXCHANGE 帧永不被加密
-                        synchronized(writeLock) {
-                            socket.getOutputStream().write(Proto.keyExchange(kp.publicEncoded))
-                        }
-                        channel.arm(session)
-                        Log.i(TAG, "加密通道已建立（AES-256-GCM）")
-                    } else {
-                        // 密钥交换失败：降级明文，不回发 KE，让对端超时后回落（不会互等死锁）
-                        Log.w(TAG, "密钥派生失败，回退明文通道")
-                        pending = null
+                runCatching { socket.soTimeout = 1500 }
+                while (true) {
+                    val f = runCatching { reader.read() }.getOrNull()
+                    if (f == null) {
+                        Log.w(TAG, "握手阶段未收到 KEY_EXCHANGE（超时或断流），回退明文通道")
+                        break
                     }
-                } else {
-                    Log.w(TAG, "对端不支持加密，回退明文通道")
-                    pending = first
+                    if (f.type == Type.KEY_EXCHANGE) {
+                        val kp = runCatching { Crypto.newKeyPair() }.getOrNull()
+                        val session = if (kp != null) runCatching { Crypto.deriveSessionKey(kp, f.body) }.getOrNull() else null
+                        if (kp != null && session != null) {
+                            // 先发本方 KE（明文），再武装——保证 KEY_EXCHANGE 帧永不被加密
+                            synchronized(writeLock) {
+                                socket.getOutputStream().write(Proto.keyExchange(kp.publicEncoded))
+                            }
+                            channel.arm(session)
+                            Log.i(TAG, "加密通道已建立（AES-256-GCM）")
+                        } else {
+                            // 密钥交换失败：降级明文，不回发 KE，让对端超时后回落（不会互等死锁）
+                            Log.w(TAG, "密钥派生失败，回退明文通道")
+                        }
+                        break
+                    }
+                    if (f.type == Type.HELLO) {
+                        receiverName = Decoders.textOf(f)
+                        receiverBeacons[hostAddress ?: ""] = receiverName
+                        Log.i(TAG, "接收端 $hostAddress 宣告设备名：$receiverName")
+                        notifyReceiversChanged()
+                        continue
+                    }
+                    // 协议外的握手帧（旧版对端 HELLO 后直接发业务帧）：暂存并回落明文
+                    Log.w(TAG, "握手阶段收到非预期帧 type=${f.type}，回退明文通道")
+                    pending = f
+                    break
                 }
+                runCatching { socket.soTimeout = 0 }
                 while (!closed) {
                     val raw = pending ?: (reader.read() ?: break)
                     pending = null

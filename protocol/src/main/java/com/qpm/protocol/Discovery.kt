@@ -24,32 +24,47 @@ object Discovery {
     /**
      * 手机端调用，阻塞循环直到线程被中断。
      * 被 interrupt() 时 Thread.sleep 抛 InterruptedException 退出，DatagramSocket 随 use{} 关闭。
+     * 中断与网络异常都必须在这里消化：Runnable 里逃逸的未捕获异常会直接杀进程。
      */
     fun broadcastLoop(port: Int, w: Int, h: Int) {
         val payload = beacon(port, w, h).toByteArray(StandardCharsets.UTF_8)
-        DatagramSocket().use { s ->
-            s.broadcast = true
-            val addr = InetAddress.getByName("255.255.255.255")
-            while (!Thread.currentThread().isInterrupted) {
-                s.send(DatagramPacket(payload, payload.size, addr, PORT))
-                Thread.sleep(1000)
+        try {
+            DatagramSocket().use { s ->
+                s.broadcast = true
+                val addr = InetAddress.getByName("255.255.255.255")
+                while (!Thread.currentThread().isInterrupted) {
+                    s.send(DatagramPacket(payload, payload.size, addr, PORT))
+                    Thread.sleep(1000)
+                }
             }
+        } catch (_: InterruptedException) {
+            // 调用方 interrupt() 要求退出：正常路径
+        } catch (_: Exception) {
+            // 网络异常（如 Wi-Fi 断开）：静默退出，调用方按无 beacon 处理。
+            // 注意：未捕获异常会逃逸出 Runnable 直接杀进程，这里必须消化。
         }
     }
 
     /**
      * 接收端调用，阻塞循环直到线程被中断。
      * 让发送端「连接管理」能扫描到本机（即使尚未连接）。
+     * 中断与网络异常都必须在这里消化，理由同 [broadcastLoop]。
      */
     fun broadcastReceiverLoop(name: String) {
         val payload = receiverBeacon(name).toByteArray(StandardCharsets.UTF_8)
-        DatagramSocket().use { s ->
-            s.broadcast = true
-            val addr = InetAddress.getByName("255.255.255.255")
-            while (!Thread.currentThread().isInterrupted) {
-                s.send(DatagramPacket(payload, payload.size, addr, PORT))
-                Thread.sleep(1000)
+        try {
+            DatagramSocket().use { s ->
+                s.broadcast = true
+                val addr = InetAddress.getByName("255.255.255.255")
+                while (!Thread.currentThread().isInterrupted) {
+                    s.send(DatagramPacket(payload, payload.size, addr, PORT))
+                    Thread.sleep(1000)
+                }
             }
+        } catch (_: InterruptedException) {
+            // 离开接收端界面时 interrupt()：正常路径，不再崩溃
+        } catch (_: Exception) {
+            // 网络异常：静默退出，理由同上
         }
     }
 

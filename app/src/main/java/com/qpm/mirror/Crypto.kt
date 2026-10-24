@@ -21,10 +21,10 @@ import javax.crypto.Cipher
  *   TCP 有序且双方向各自独立计数，收发两端计数天然同步，无需随帧传输 nonce；
  *   方向位保证同一份密钥材料两个方向的 nonce 不重叠（GCM 严禁 nonce 重用）。
  *
- * 握手竞态约定（由调用方保证，见 SecureChannel 注释）：
- * - 发送端 accept 连接后第一帧必须是本方 KE；
- * - 接收端连上后第一帧必须是本方 KE，随后阻塞预读一帧等对端 KE。
- * 这样双方「发出的第一帧」必晚于「收到的第一帧」，不会出现各自等对方 KE 的死锁。
+ * 握手时序（由调用方保证，不死锁；见 SecureChannel 注释）：
+ * - 接收端连上后先明文发 HELLO（设备名），再发本方 KE，随后阻塞预读一帧等对端 KE；
+ * - 发送端 accept 后在读循环里消费握手帧（HELLO 内联记录），收到 KE 才回发本方 KE 并武装；
+ * 双方 KE 都在明文阶段互换，握手完成后的第一帧起计数器从 0 对齐。
  */
 internal object Crypto {
     private const val EC = "EC"

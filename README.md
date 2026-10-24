@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.13-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.14-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -169,7 +169,17 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 ## 📝 更新日志
 
-### v0.13（本轮）
+### v0.14（本轮）
+
+**修复**
+- 接收端配对成功后立马断开、退回主界面（手机 / Quest 作接收端均复现）：根因是配对成功后首帧数据流上有三处未防护的异常出口——解码器 `feed()` 的 `buffer.put()` 遇超大关键帧抛 `BufferOverflowException` 打断整条连接；读循环帧分发无兜底、一帧异常即断流；编解码回调线程 `releaseOutputBuffer` 未捕获 `IllegalStateException` 直接杀进程。现已全部加固：超大帧丢载荷但归还输入缓冲（防缓冲池枯竭黑屏）、单帧异常只丢该帧、回调异常全部兜底
+- 加密通道实际未启用：接收端 v0.13 起先明文发 `HELLO` 再发 `KEY_EXCHANGE`，而发送端仍要求「首帧必须是 KE」，导致双方永不武装、全程明文。发送端握手改为循环消费（`HELLO` 内联记录、拿到 KE 才回发并武装），加密真正生效且计数器严格对齐
+- 加密运算失败后通道永久卡死：`SecureChannel` 失败只置 `broken` 不清密钥，后续帧持续加解密失败；现改为失败即清密钥，双向自动收敛回明文，连接保持可用
+- 离开接收端界面 / 停止投屏时偶发闪退：beacon 广播线程在 `Thread.sleep` 中被 `interrupt()`，未捕获的 `InterruptedException` 逃逸出 Runnable 直接杀进程；两个广播循环均已消化中断与网络异常
+
+* * *
+
+### v0.13
 
 **新功能**
 - **方向同步优化**：手机横竖屏旋转后自动重建画布并重排接收端画面与触摸映射，画面不压扁、点击不错位
@@ -310,8 +320,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.13        # 版本号唯一来源就是 git tag
-git push origin v0.13
+git tag v0.14        # 版本号唯一来源就是 git tag
+git push origin v0.14
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
