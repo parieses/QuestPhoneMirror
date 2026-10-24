@@ -86,6 +86,9 @@ jobs:
       - name: Build
         id: build
         run: |
+          # pipefail：管到 tee 时退出码默认取 tee 的，会把 gradle 失败伪装成步骤成功，
+          # 导致错误推迟到 Collect APKs 才以"找不到 apk"的模糊形式暴露
+          set -o pipefail
           gradle :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
 
       # 构建失败时把完整日志推到 ci-logs 分支，方便排查

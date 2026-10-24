@@ -37,6 +37,12 @@ class FileBrowserActivity : AppCompatActivity() {
         private const val MAX_PREVIEW_TEXT = 512L * 1024
         private const val CHUNK = 64 * 1024
 
+        // 下载模式：预览图片 / 预览文本 / 落盘保存
+        private const val MODE_NONE = 0
+        private const val MODE_IMAGE = 1
+        private const val MODE_TEXT = 2
+        private const val MODE_SAVE = 3
+
         private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
         private val TEXT_EXT = setOf(
             "txt", "md", "json", "log", "xml", "csv", "htm", "html",
@@ -280,11 +286,4 @@ class FileBrowserActivity : AppCompatActivity() {
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
-
-    private companion object {
-        const val MODE_NONE = 0
-        const val MODE_IMAGE = 1
-        const val MODE_TEXT = 2
-        const val MODE_SAVE = 3
-    }
 }

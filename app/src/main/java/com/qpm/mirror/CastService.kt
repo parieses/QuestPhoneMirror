@@ -470,34 +470,34 @@ class CastService : Service() {
                     val frame = reader.read() ?: break
                     when (frame.type) {
                         Type.HELLO -> {
-                            receiverName = Decoders.textOf(f)
+                            receiverName = Decoders.textOf(frame)
                             receiverBeacons[hostAddress ?: ""] = receiverName
                             Log.i(TAG, "接收端 $hostAddress 宣告设备名：$receiverName")
                             notifyReceiversChanged()
                         }
 
-                        Type.PAIR -> handlePair(Decoders.pairOf(f))
+                        Type.PAIR -> handlePair(Decoders.pairOf(frame))
 
                         Type.TAP -> if (paired) dispatchControl { svc ->
-                            val (x, y) = Decoders.tap(f)
+                            val (x, y) = Decoders.tap(frame)
                             svc.tap(x, y)
                         }
 
                         Type.SWIPE -> if (paired) dispatchControl { svc ->
-                            val a = Decoders.swipe(f)
+                            val a = Decoders.swipe(frame)
                             svc.swipe(a[0], a[1], a[2], a[3], a[4].toInt())
                         }
 
                         Type.TEXT -> if (paired) dispatchControl { svc ->
-                            svc.sendText(Decoders.textOf(f))
+                            svc.sendText(Decoders.textOf(frame))
                         }
 
                         Type.KEY -> if (paired) dispatchControl { svc ->
-                            svc.key(Decoders.keyOf(f))
+                            svc.key(Decoders.keyOf(frame))
                         }
 
-                        Type.FILE_LIST_REQ -> if (paired) handleFileList(Decoders.pathOf(f))
-                        Type.FILE_GET_REQ -> if (paired) handleFileGet(Decoders.pathOf(f))
+                        Type.FILE_LIST_REQ -> if (paired) handleFileList(Decoders.pathOf(frame))
+                        Type.FILE_GET_REQ -> if (paired) handleFileGet(Decoders.pathOf(frame))
                     }
                 }
             } catch (e: Exception) {

@@ -112,13 +112,13 @@ class MirrorClient(
                     phoneScreenH = h
                     onScreenInfo(w, h, dpi)
                 }
-                Type.PAIR_RESULT -> onPairResult(Decoders.pairResultOf(f))
-                Type.FILE_LIST_RES -> onFileList(Decoders.fileEntriesOf(f))
-                Type.FILE_DATA -> onFileData(Decoders.fileDataOf(f))
-                Type.FILE_ERROR -> onFileError(Decoders.pathOf(f))
+                Type.PAIR_RESULT -> onPairResult(Decoders.pairResultOf(frame))
+                Type.FILE_LIST_RES -> onFileList(Decoders.fileEntriesOf(frame))
+                Type.FILE_DATA -> onFileData(Decoders.fileDataOf(frame))
+                Type.FILE_ERROR -> onFileError(Decoders.pathOf(frame))
                 Type.REJECT -> {
                     // 发送端主动拒绝（未在白名单），回调后等对端断开
-                    onRejected(Decoders.textOf(f))
+                    onRejected(Decoders.textOf(frame))
                 }
             }
         }
