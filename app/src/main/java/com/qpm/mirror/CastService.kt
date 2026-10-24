@@ -221,8 +221,17 @@ class CastService : Service() {
     /** 当前虚拟显示/编码器尺寸（旋转时对比用，与真实屏幕保持同步）。 */
     private var videoW: Int = 0
     private var videoH: Int = 0
+    private var videoDpi: Int = 0
     private var orientationListener: OrientationEventListener? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
     private var lastRotationBucket: Int = -1
+
+    /** 重建进行中标记：显示监听与传感器可能在同一瞬间各触发一次，避免并行建出两套编码器。 */
+    @Volatile
+    private var reconfiguring: Boolean = false
+
+    /** 上次重建失败的目标尺寸（w*10000+h）：同一尺寸不再反复尝试，避免每次显示事件都闪一下。 */
+    private var lastFailedSize: Int = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -263,6 +272,8 @@ class CastService : Service() {
     private fun start(code: Int, data: Intent, bitrate: Int) {
         if (running) return
         running = true
+        reconfiguring = false
+        lastFailedSize = 0
         currentPairCode = pairCode
         currentBitrate = bitrate
         lastPeerSeen.set(0L)
@@ -273,6 +284,7 @@ class CastService : Service() {
         val metrics = realMetrics()
         videoW = metrics.widthPixels
         videoH = metrics.heightPixels
+        videoDpi = metrics.densityDpi
 
         val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projection = pm.getMediaProjection(code, data)
@@ -341,39 +353,114 @@ class CastService : Service() {
         })
 
     /**
-     * 屏幕旋转监听：横竖屏切换后 VirtualDisplay/编码器尺寸与真实屏幕不符
-     * （AUTO_MIRROR 只镜像内容不缩放，尺寸不变画面会被压扁/裁剪），
+     * 屏幕方向监听：横竖屏切换后 VirtualDisplay/编码器尺寸与真实屏幕不符
+     * （AUTO_MIRROR 只镜像内容不缩放，尺寸不变画面会被挤成中间一条/压扁），
      * 按新尺寸重建显示与编码器，并重发 SCREEN_INFO 让接收端重排画面与触摸映射。
-     * 用 90° 分桶做防抖：小角度抖动不触发重建。
+     *
+     * 两路信号都要挂，任一路到就核对一次尺寸：
+     *   ① DisplayManager.DisplayListener —— 显示配置真的变了（旋转、分辨率变化）才回调，最权威。
+     *      视频/游戏 App 用 setRequestedOrientation 强制横屏、手机本身没转（或开着旋转锁定、
+     *      竖着拿手机看横屏视频）时，只有它能感知到 —— 只挂传感器会漏掉这种最常见的场景。
+     *   ② OrientationEventListener —— 传感器角度跨过 90° 分桶时触发，覆盖个别 ROM 的
+     *      DisplayListener 不回调的情况；用分桶防抖，小角度抖动不触发。
+     * 两路都只是「提醒」，真正的判断是 realMetrics() 与当前编码尺寸比对，避免空转重建。
      */
     private fun startRotationWatch() {
+        stopRotationWatch()
         lastRotationBucket = -1
+
+        val dm = getSystemService(DisplayManager::class.java)
+        val dl = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+            override fun onDisplayRemoved(displayId: Int) = Unit
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId != Display.DEFAULT_DISPLAY) return
+                scheduleReconfigure()
+            }
+        }
+        runCatching { dm.registerDisplayListener(dl, mainHandler) }
+            .onFailure { Log.w(TAG, "注册显示监听失败：${it.message}") }
+        displayListener = dl
+
         orientationListener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(orientation: Int) {
                 if (!running || orientation == ORIENTATION_UNKNOWN) return
                 val bucket = ((orientation + 45) / 90) % 4
                 if (bucket == lastRotationBucket) return
                 lastRotationBucket = bucket
-                mainHandler.post { reconfigureForRotation() }
+                scheduleReconfigure()
             }
         }.also { if (it.canDetectOrientation()) it.enable() }
     }
 
-    private fun stopRotationWatch() {
-        orientationListener?.disable()
-        orientationListener = null
+    /** 显示配置变化后度量值可能晚一拍才更新，延迟 120ms 再核对（多次触发合并成一次）。 */
+    private fun scheduleReconfigure() {
+        mainHandler.removeCallbacks(reconfigTask)
+        mainHandler.postDelayed(reconfigTask, 120)
     }
 
-    /** 旋转后按新屏幕尺寸重建 VirtualDisplay + 编码器，并广播新的 SCREEN_INFO。 */
+    private val reconfigTask = Runnable { reconfigureForRotation() }
+
+    private fun stopRotationWatch() {
+        runCatching {
+            displayListener?.let { getSystemService(DisplayManager::class.java).unregisterDisplayListener(it) }
+        }
+        displayListener = null
+        runCatching { orientationListener?.disable() }
+        orientationListener = null
+        mainHandler.removeCallbacks(reconfigTask)
+    }
+
+    /**
+     * 核对真实屏幕尺寸，不一致就按新尺寸重建 VirtualDisplay + 编码器，并广播新的 SCREEN_INFO。
+     *
+     * 顺序沿用「先拆旧、再建新」：个别 ROM 不允许同一个 MediaProjection 同时挂两个虚拟显示，
+     * 先建新的会拿不到句柄。代价是重建瞬间会黑一下，所以失败时必须能**按旧尺寸恢复**——
+     * 旧实现失败即 stopAll 断流，用户看到的就是「一转屏投屏就断了」。
+     */
     private fun reconfigureForRotation() {
-        if (!running) return
+        if (!running || reconfiguring) return
         val m = realMetrics()
         val w = m.widthPixels
         val h = m.heightPixels
+        if (w <= 0 || h <= 0) return
         if (w == videoW && h == videoH) return
-        Log.i(TAG, "屏幕旋转：${videoW}x$videoH -> ${w}x$h，重建虚拟显示与编码器")
-        postStatus("屏幕方向变化，正在按新尺寸调整画面…")
-        // 先停旧显示与编码器（顺序：显示不再喂帧 -> 编码器收尾），再按新尺寸重建
+        // 同一个尺寸刚失败过就别再拆了重试一次了，否则每次显示事件都会黑一下
+        val sizeKey = w * 10000 + h
+        if (sizeKey == lastFailedSize) return
+        reconfiguring = true
+        val oldW = videoW
+        val oldH = videoH
+        val oldDpi = videoDpi
+        try {
+            Log.i(TAG, "屏幕尺寸变化：${oldW}x$oldH -> ${w}x$h，按新尺寸重建虚拟显示与编码器")
+            postStatus("屏幕方向变化，正在按 ${w}x$h 调整画面…")
+            if (rebuildPipeline(w, h, m.densityDpi)) {
+                lastFailedSize = 0
+                postStatus(if (w > h) "已切换为横屏 ${w}x$h" else "已切换为竖屏 ${w}x$h")
+                // 接收端靠 SCREEN_INFO 重排 SurfaceView 宽高比与触摸映射，必须重发
+                clients.forEach { it.sendReliable(Proto.screenInfo(w, h, m.densityDpi)) }
+                // beacon 里带着屏幕尺寸，换块线程重新广播
+                broadcastThread?.interrupt()
+                broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, w, h) }.apply { start() }
+                return
+            }
+            // 新尺寸建不出来：按旧尺寸恢复，宁可比例不对也别断流
+            Log.w(TAG, "按 ${w}x$h 重建失败，尝试恢复 ${oldW}x$oldH")
+            lastFailedSize = sizeKey
+            if (oldW > 0 && oldH > 0 && rebuildPipeline(oldW, oldH, oldDpi)) {
+                postStatus("按 ${w}x$h 重建失败（该尺寸可能不受本机编码器支持），已恢复 ${oldW}x$oldH 继续投屏")
+                return
+            }
+            postStatus("画面重建失败，投屏已停止")
+            stopAll()
+        } finally {
+            reconfiguring = false
+        }
+    }
+
+    /** 拆掉当前显示与编码器，按给定尺寸重建。全部成功才返回 true 并更新 videoW/H。 */
+    private fun rebuildPipeline(w: Int, h: Int, dpi: Int): Boolean {
         runCatching { display?.release() }
         display = null
         runCatching { encoder?.stop() }
@@ -381,34 +468,32 @@ class CastService : Service() {
         val enc = try {
             newEncoder(w, h)
         } catch (e: Exception) {
-            Log.e(TAG, "旋转后编码器初始化失败: ${e.message}")
-            postStatus("编码器初始化失败：${e.message ?: "本机不支持 H.264 硬编"}，投屏已停止")
-            stopAll()
-            return
+            Log.e(TAG, "创建 ${w}x$h 编码器失败: ${e.message}")
+            return false
+        }
+        val vd = runCatching {
+            projection?.createVirtualDisplay(
+                "qpm-cast",
+                w,
+                h,
+                dpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                enc.inputSurface,
+                null,
+                null
+            )
+        }.onFailure { Log.e(TAG, "创建 ${w}x$h 虚拟显示异常: ${it.message}") }.getOrNull()
+        if (vd == null) {
+            Log.e(TAG, "创建 ${w}x$h 虚拟显示失败（返回 null）")
+            runCatching { enc.stop() }
+            return false
         }
         encoder = enc
+        display = vd
         videoW = w
         videoH = h
-        display = projection?.createVirtualDisplay(
-            "qpm-cast",
-            w,
-            h,
-            m.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            enc.inputSurface,
-            null,
-            null
-        )
-        if (display == null) {
-            postStatus("虚拟显示创建失败，投屏已停止")
-            stopAll()
-            return
-        }
-        // 接收端靠 SCREEN_INFO 重排 SurfaceView 宽高比与触摸映射，必须重发
-        clients.forEach { it.sendReliable(Proto.screenInfo(w, h, m.densityDpi)) }
-        // beacon 里带着屏幕尺寸，换块线程重新广播
-        broadcastThread?.interrupt()
-        broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, w, h) }.apply { start() }
+        videoDpi = dpi
+        return true
     }
 
     /** 真实屏幕尺寸（随旋转实时更新；resources.displayMetrics 有配置更新延迟，不用）。 */
@@ -531,6 +616,7 @@ class CastService : Service() {
 
     private fun stopAll() {
         running = false
+        reconfiguring = false
         currentPairCode = null
         lastPeerSeen.set(0L)
         stopRotationWatch()

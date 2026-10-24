@@ -137,8 +137,9 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 **📐 方向同步（旋转适配）**
 
-- `VirtualDisplay` 用 `AUTO_MIRROR` 只镜像内容不缩放，手机横竖屏切换后画面会被压扁 / 裁剪
-- 监听 `OrientationEventListener`，按 90° 分桶防抖；旋转后用 `Display.getRealMetrics()` 取实时尺寸重建 VirtualDisplay + H264Encoder
+- `VirtualDisplay` 用 `AUTO_MIRROR` 只镜像内容不缩放，手机横竖屏切换后画面会被挤成中间一条 / 压扁
+- 两路信号同时监听、任一触发就核对尺寸：`DisplayManager.DisplayListener`（显示配置真的变了才回调，**视频/游戏 App 强制横屏、手机没转也能感知**）+ `OrientationEventListener`（传感器 90° 分桶防抖）
+- 尺寸不一致时用 `Display.getRealMetrics()` 取实时尺寸重建 VirtualDisplay + H264Encoder；重建失败（个别机型不支持 3200×1440 这类尺寸）会**按旧尺寸自动恢复继续投屏**，不再直接断流，并记住该尺寸避免反复闪屏
 - 重建后重发 `SCREEN_INFO`（`0x20`），接收端据此重排 `SurfaceView` 宽高比与 `TouchMapper` 触摸映射，**画面与点击同步适配**
 
 **🔐 加密通道**
@@ -176,6 +177,7 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 - 加密通道实际未启用：接收端 v0.13 起先明文发 `HELLO` 再发 `KEY_EXCHANGE`，而发送端仍要求「首帧必须是 KE」，导致双方永不武装、全程明文。发送端握手改为循环消费（`HELLO` 内联记录、拿到 KE 才回发并武装），加密真正生效且计数器严格对齐
 - 加密运算失败后通道永久卡死：`SecureChannel` 失败只置 `broken` 不清密钥，后续帧持续加解密失败；现改为失败即清密钥，双向自动收敛回明文，连接保持可用
 - 离开接收端界面 / 停止投屏时偶发闪退：beacon 广播线程在 `Thread.sleep` 中被 `interrupt()`，未捕获的 `InterruptedException` 逃逸出 Runnable 直接杀进程；两个广播循环均已消化中断与网络异常
+- 横屏看视频 / 玩游戏时接收端画面挤成中间一条：手机屏幕已经横过来、编码器却仍按竖屏尺寸出图（VirtualDisplay 尺寸没变，系统只能把横屏画面缩进竖屏缓冲，上下留大片黑边，视频只占中间 20% 高）。只监听 `OrientationEventListener` 会漏掉「视频 App 用 `setRequestedOrientation` 强制横屏、手机本身没转（或开着旋转锁定）」这种最常见的情况——现同时注册 `DisplayManager.DisplayListener`，两路任一触发都核对 `getRealMetrics()` 与当前编码尺寸，不一致即重建；重建失败（个别机型不支持 3200×1440 这类尺寸）不再 `stopAll` 断流，而是按旧尺寸恢复继续投屏，并记住该尺寸避免反复闪屏
 
 * * *
 
@@ -339,6 +341,7 @@ CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 G
 | 画面花屏 / 绿屏 | 等一秒让关键帧到达；仍不行重进接收端 |
 | 更新时提示「签名不一致」 | 旧版装的是 debug 签名包，卸载后装 Releases 里的 `app-release.apk` 即可（App 无持久数据，卸载无损失） |
 | 画面卡 / 延迟高 | 画质切「流畅」；换 5G Wi-Fi；确认两端离路由器不远 |
+| 横屏看视频 / 玩游戏时，接收端画面挤成中间一条 | 手机屏幕已经横过来、编码器却还在按竖屏尺寸出图，系统就把横屏画面缩进竖屏缓冲里（表现为上下大片黑边、视频只占中间 20% 高）。新版已同时监听显示配置变化与传感器角度，任一触发就按新尺寸重建编码器；旧版遇到时**在横屏状态下停止投屏再重新开始**即可（重连不会重建编码器） |
 | 解码错误提示 | 返回重进接收端；系统版本过旧的设备可能缺 H.264 硬解 |
 | Netflix 等黑屏 | DRM 硬件保护，无法镜像 |
 
