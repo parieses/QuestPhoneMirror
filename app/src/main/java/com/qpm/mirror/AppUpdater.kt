@@ -28,8 +28,10 @@ import java.util.concurrent.Executors
  * 无需存储权限），完成后经 FileProvider 分享给系统安装器。
  *
  * 设计取舍：
- * - 不用系统通知（VISIBILITY_HIDDEN）：DownloadManager 自带通知点击后会再弹一次安装，
- *   与应用的安装提示重复；进度改由应用内对话框轮询展示。
+ * - 通知用 VISIBILITY_VISIBLE_NOTIFY_COMPLETED：曾用 VISIBILITY_HIDDEN(2)，但
+ *   DownloadManager 服务端只接受 0/1，传 2 会抛 "invalid value for visibility 2"
+ *   导致 enqueue 直接失败（这正是「无法启动下载任务」的根因）。系统通知点击后走
+ *   系统安装器，与应用内安装提示是两条独立路径，都能装，不再追求「只弹一次」。
  * - 多源下载：候选链（Gitee 镜像 / 公共代理 / GitHub 直连）先在子线程做 HEAD 探测，
  *   选第一个可用的再入队——公共代理随时可能挂，链式回退比写死单源稳。
  * - downloadId / 待安装版本号落盘：用户下载途中离开页面，回来 onResume 能补提示安装；
@@ -228,7 +230,12 @@ class AppUpdater(private val activity: AppCompatActivity) {
                     Environment.DIRECTORY_DOWNLOADS,
                     UpdateChecker.APK_FILE_NAME
                 )
-                setNotificationVisibility(DownloadManager.Request.VISIBILITY_HIDDEN)
+                // 注意：不能用 VISIBILITY_HIDDEN（值 2）——DownloadManager 服务端
+                // 只接受 0/1，传 2 会在 enqueue 时抛 SecurityException:
+                // "invalid value for visibility 2"（部分系统版本直接静默失败）。
+                // 系统通知点击后会打开系统安装器，与应用内安装提示属两条独立路径，
+                // 用户走哪条都能装，不再是「重复弹两次」的问题。
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 setAllowedNetworkTypes(
                     DownloadManager.Request.NETWORK_WIFI or DownloadManager.Request.NETWORK_MOBILE
                 )

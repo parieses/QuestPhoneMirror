@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -139,18 +140,26 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
 
     private fun showUpdateDialog(release: UpdateChecker.Release, auto: Boolean) {
         updateDialog?.dismiss()
-        updateDialog = AlertDialog.Builder(this)
-            .setTitle("发现新版本 ${release.versionName}")
-            .setMessage(release.notes)
-            .setPositiveButton("下载并安装") { _, _ -> onDownloadClicked(release) }
-            .setNegativeButton(if (auto) "不再提示此版本" else "稍后再说") { _, _ ->
+        val view = layoutInflater.inflate(R.layout.dialog_update_available, null)
+        view.findViewById<TextView>(R.id.tvNewVersion).text = release.versionName
+        view.findViewById<TextView>(R.id.tvNotes).text = release.notes
+        view.findViewById<Button>(R.id.btnDownload).setOnClickListener { onDownloadClicked(release) }
+        view.findViewById<Button>(R.id.btnLater).apply {
+            // 自动弹窗时可「不再提示此版本」（落 skipped_version 免打扰）；手动检查只能「稍后再说」
+            text = if (auto) "不再提示此版本" else "稍后再说"
+            setOnClickListener {
                 if (auto) {
                     checkPrefs.edit().putString(KEY_SKIPPED_VERSION, release.versionName).apply()
                 }
+                updateDialog?.dismiss()
             }
-            .setNeutralButton("去 GitHub 看看") { _, _ ->
-                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl)))
-            }
+        }
+        view.findViewById<TextView>(R.id.tvGithub).setOnClickListener {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl))) }
+                .onFailure { toast("无法打开浏览器，请手动访问 GitHub Releases") }
+        }
+        updateDialog = AlertDialog.Builder(this, R.style.Theme_QPM_Dialog)
+            .setView(view)
             .setOnDismissListener { updateDialog = null }
             .show()
     }
@@ -186,10 +195,10 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         val view = layoutInflater.inflate(R.layout.dialog_update_progress, null)
         progressBar = view.findViewById(R.id.progressBar)
         tvProgress = view.findViewById(R.id.tvProgress)
-        progressDialog = AlertDialog.Builder(this)
-            .setTitle("正在下载 $versionName")
+        view.findViewById<TextView>(R.id.tvProgressPhase).text = "$versionName · 正在选择最快下载源…"
+        view.findViewById<TextView>(R.id.btnBackground).setOnClickListener { progressDialog?.dismiss() }
+        progressDialog = AlertDialog.Builder(this, R.style.Theme_QPM_Dialog)
             .setView(view)
-            .setNegativeButton("后台下载") { _, _ -> }
             .setOnDismissListener {
                 progressDialog = null
                 progressBar = null

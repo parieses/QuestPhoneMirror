@@ -10,4 +10,10 @@
         <item name="android:textColorSecondary">@color/text_dim</item>
         <item name="android:colorBackground">@color/bg</item>
     </style>
+
+    <!-- 更新弹窗专用：windowBackground 透明，圆角深色卡片由布局自带背景绘制 -->
+    <style name="Theme.QPM.Dialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
 </resources>
