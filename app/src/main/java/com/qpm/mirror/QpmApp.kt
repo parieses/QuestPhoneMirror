@@ -68,7 +68,10 @@ class QpmApp : Application() {
     private fun reportPreviousExits() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return
-        val exits = runCatching { am.getHistoricalProcessExitReports() }.getOrNull() ?: return
+        // 注意方法名是 getHistoricalProcessExitReasons（maxNum/userId 传 0 表示默认/当前用户）
+        val exits = runCatching {
+            am.getHistoricalProcessExitReasons(packageName, 0, 0)
+        }.getOrNull() ?: return
         if (exits.isEmpty()) return
         val now = System.currentTimeMillis()
         val dir = File(getExternalFilesDir(null), "crashes")
