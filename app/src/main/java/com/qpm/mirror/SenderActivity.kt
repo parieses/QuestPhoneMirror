@@ -1,6 +1,7 @@
 package com.qpm.mirror
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -9,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
@@ -228,12 +230,34 @@ class SenderActivity : AppCompatActivity() {
             return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startActivity(
+            // 注意：MANAGE_ALL_FILES_ACCESS_PERMISSION 是全局列表页，AOSP 的 intent-filter
+            // 不声明 <data>；给它附 package: URI 会解析不到 Activity 直接抛
+            // ActivityNotFoundException 闪退（国产 ROM filter 写得松才碰巧不崩）。
+            // 正确做法是用应用专属 action，并做三级回退兜底。
+            val candidates = listOf(
+                // 1. 应用专属「所有文件访问」开关页（API 30+，filter 带 package scheme）
                 Intent(
-                    Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION,
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:$packageName")
+                ),
+                // 2. 全局文件访问列表页（不带 data，让用户在列表里找到本应用）
+                Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+                // 3. 应用详情页兜底
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     Uri.parse("package:$packageName")
                 )
             )
+            for (intent in candidates) {
+                try {
+                    startActivity(intent)
+                    toast("请开启「允许管理所有文件」后返回")
+                    return
+                } catch (e: ActivityNotFoundException) {
+                    Log.w(TAG, "file-access intent 不可用: ${intent.action}", e)
+                }
+            }
+            toast("无法打开系统设置，请手动在系统设置中为本应用开启文件访问权限")
         } else {
             requestPermissions(
                 arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE),
@@ -291,6 +315,7 @@ class SenderActivity : AppCompatActivity() {
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
     private companion object {
+        private const val TAG = "SenderActivity"
         private const val REQ_READ_STORAGE = 1001
     }
 }
