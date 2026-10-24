@@ -103,7 +103,7 @@ object QpmLog {
         val f = currentFile() ?: return emptyList()
         return runCatching {
             val lines = f.readLines()
-            if (lines.size <= n) lines else lines.subList(lines.size - n, lines)
+            if (lines.size <= n) lines else lines.subList(lines.size - n, lines.size)
         }.getOrDefault(emptyList())
     }
 

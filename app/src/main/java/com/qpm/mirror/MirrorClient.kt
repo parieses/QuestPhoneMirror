@@ -186,14 +186,17 @@ class MirrorClient(
         var firstFrameLogged = false
 
         while (true) {
+            // 不用 run { break }：非内联 lambda 里的 break/continue 是实验性语言特性，
+            // 本项目 Kotlin 版本下直接编译失败；EOF 与读帧异常统一走 null 判断退出
             val raw = try {
-                pending ?: (reader.read() ?: run {
-                    QpmLog.i(TAG, "对端关闭连接（EOF），主循环退出，共收帧 $frameCount")
-                    break
-                })
+                pending ?: reader.read()
             } catch (e: Exception) {
                 QpmLog.w(TAG, "读帧异常，连接断开（已收帧 $frameCount）", e)
                 onStatus("连接中断：${e.message}")
+                null
+            }
+            if (raw == null) {
+                QpmLog.i(TAG, "对端关闭连接（EOF）或读帧失败，主循环退出，共收帧 $frameCount")
                 break
             }
             pending = null

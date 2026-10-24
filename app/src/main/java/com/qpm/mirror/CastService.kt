@@ -238,8 +238,7 @@ class CastService : Service() {
      * 会 post stopAll() 把刚建好的新流水线拆掉，表现为「一转屏投屏就断」。
      * 代际不匹配的回调一律丢弃（onError 仅记日志）。
      */
-    @Volatile
-    private var encoderGen: Int = 0
+    private val encoderGen = AtomicLong(0)
 
     override fun onCreate() {
         super.onCreate()
@@ -349,7 +348,7 @@ class CastService : Service() {
         // 每个编码器实例一个代际，重建/停止后迟到的回调按代际丢弃（见 encoderGen 注释）
         val gen = encoderGen.incrementAndGet()
         return H264Encoder(w, h, currentBitrate, onFrame = { buf, size, flags, pts ->
-            if (gen == encoderGen) {
+            if (gen == encoderGen.get()) {
                 val frame = Proto.videoFrame(pts, flags, buf, 0, size)
                 statFrames.incrementAndGet()
                 statBytes.addAndGet(size.toLong())
@@ -358,7 +357,7 @@ class CastService : Service() {
                 if (!accepted) statDropped.incrementAndGet()
             }
         }, onError = { msg ->
-            if (gen == encoderGen) {
+            if (gen == encoderGen.get()) {
                 QpmLog.e(TAG, "编码器错误: $msg")
                 postStatus("编码器错误：$msg，投屏已停止")
                 // 不能在本线程直接调 codec.stop()（MediaCodec 回调内调用会崩溃），切主线程执行
