@@ -2,6 +2,11 @@ name: Build APK
 
 on:
   push:
+    # main 推送也编译一次（只产 artifact，不打 Release——见末尾 Attach to Release 的
+    # startsWith(github.ref,'refs/tags/') 条件）。这样「先验证编译、绿了再打 tag」，
+    # 不会再出现 tag 推上去才发现编译错误、删 tag 重打的情况。
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
