@@ -45,6 +45,7 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 | 反向控制 | 点击 / 拖动 / 文字输入 / Home·返回·多任务键，走 `AccessibilityService.dispatchGesture` |
 | 文件浏览 | 目录列表、图片 / 文本应用内预览、其他文件 64KB 分片下载到本机 |
 | 防自动息屏 | 投屏期间临时禁用系统熄屏（需「修改系统设置」权限），退出自动恢复 |
+| 检查更新 | 入口页一键检查 GitHub Releases 最新版，下载 APK 并拉起系统安装 |
 | 健壮性 | CSD 三重保险 + IDR 前重发 SPS/PPS、队列满丢旧帧保延迟、编解码错误直达 UI |
 
 * * *
@@ -117,6 +118,16 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 - 图片（≤8MB）/ 文本（≤512KB）应用内直接预览；其他文件保存到接收端
   `Android/data/com.qpm.mirror/files/Download/`
 - 文件数据走独立写锁可靠通道，不与视频抢丢帧队列；**第二条 TCP 连接，独立配对**
+
+**🔄 检查更新**
+
+- 入口页底部「检查更新」→ 查询 GitHub Releases 最新版（`releases/latest` 接口，免 token）
+- 版本号**逐段数字比较**（`v0.10 > v0.9`，不吃字符串比较的亏）；优先下载 **release 签名包**——debug 包在澎湃OS / MIUI 上会被拒授无障碍等敏感权限
+- 下载走 `DownloadManager` 落到应用外部私有目录（无需存储权限），完成后经 `FileProvider` 拉起系统安装器；安装前自动引导「允许安装未知应用」
+- **多源下载加速**：版本检测是轻量 JSON 仍走 GitHub API；3MB 级 APK 按候选链顺序 HEAD 探测选源——**Gitee 镜像 → 公共加速代理 → GitHub 直连**，国内提速明显；代理随时可能挂，链式回退不断链
+- GitHub 未认证接口限流 **60 次/小时/IP**：自动检查每 **12 小时**一次，手动点检查不受限；下载中途离开页面，回来后自动补提示安装，装过的版本不再打扰
+
+> **Gitee 镜像配置（可选，国内下载再加速）**：Gitee → 新建仓库（建议同名 `QuestPhoneMirror`）→ 设置 → 仓库镜像管理 → 添加 GitHub 镜像 `https://github.com/parieses/QuestPhoneMirror.git`（勾选同步 Release），之后每次 GitHub 发版 Gitee 自动同步，App 下载自动走 Gitee 直连。
 
 **🔒 其他**
 
@@ -227,7 +238,7 @@ protocol/   共享协议与发现（纯 Kotlin 库，无 Android 依赖）
   Proto.kt       帧编解码（5 字节头 + body，小端序）
   Discovery.kt   双 beacon 广播 / 扫描（QPM1 发送端 + QPMR 接收端）
 app/        单 App 双角色
-  RoleActivity      角色选择入口
+  RoleActivity      角色选择入口 + 检查更新（GitHub Releases）
   SenderActivity    录屏授权、配对码、画质/防息屏、连接管理、无障碍引导
   CastService       录屏 + 编码 + TCP 服务 + 配对校验 + 白名单 + 控制分发
   QpmControlService 无障碍服务，执行点击/滑动/输入
@@ -237,6 +248,8 @@ app/        单 App 双角色
   H264Encoder       MediaCodec 硬编（Surface 输入 + CSD 三重保险）
   H264Decoder       MediaCodec 硬解（异步模式，直接渲染）
   TouchMapper       视图坐标 → 手机屏幕坐标
+  UpdateChecker     GitHub Releases 查询 + 版本比较 + APK 资产挑选
+  AppUpdater        DownloadManager 下载 + FileProvider 安装 + 权限引导
 .github/workflows/build-apk.yml   push tag v* 自动打包 debug + release APK 并挂 Release
 ```
 
