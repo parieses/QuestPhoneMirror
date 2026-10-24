@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QPM 发送端 — 重设计 v0</title>
+<style>
+  :root {
+    --bg-deep: #070613;
+    --bg: #0B0A1F;
+    --bg-top: #16133A;
+    --surface: #1A1836;
+    --surface-2: #14112E;
+    --hairline: #2E2B5C;
+    --cyan: #22D3EE;
+    --cyan-deep: #0E7490;
+    --cyan-ink: #052E2B;
+    --indigo: #4F46E5;
+    --violet: #7C3AED;
+    --text-1: #F1F5F9;
+    --text-2: #A5B4FC;
+    --text-3: #64748B;
+    --amber: #FCD34D;
+    --radius: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg-deep);
+    color: var(--text-1);
+    font-family: "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", -apple-system, sans-serif;
+    min-height: 100vh;
+    padding: 48px 32px;
+  }
+  .page-head { max-width: 1200px; margin: 0 auto 40px; }
+  .page-head h1 { font-size: 26px; font-weight: 700; letter-spacing: 0.02em; }
+  .page-head p { color: var(--text-2); font-size: 14px; margin-top: 8px; max-width: 720px; line-height: 1.7; }
+  .decisions {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px; margin-top: 24px;
+  }
+  .decision {
+    border: 1px solid var(--hairline); border-radius: 12px;
+    padding: 14px 16px; background: var(--surface);
+  }
+  .decision b { color: var(--cyan); font-size: 13px; display: block; margin-bottom: 6px; }
+  .decision span { color: var(--text-2); font-size: 12px; line-height: 1.6; }
+
+  .stage { display: flex; gap: 48px; justify-content: center; flex-wrap: wrap; }
+  .frame-col { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .frame-label { color: var(--text-3); font-size: 13px; letter-spacing: 0.08em; }
+  .frame-label b { color: var(--text-1); }
+
+  /* ============ 手机框 ============ */
+  .phone {
+    width: 375px; height: 812px; border-radius: 44px;
+    background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 100%);
+    border: 10px solid #1C1A3D;
+    box-shadow: 0 0 0 1px var(--hairline), 0 32px 80px rgba(0,0,0,.6);
+    overflow: hidden; position: relative;
+    display: flex; flex-direction: column;
+  }
+  .notch {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 110px; height: 26px; background: #0D0B22; border-radius: 13px; z-index: 10;
+  }
+  .screen { flex: 1; overflow-y: auto; padding: 52px 20px 20px; scrollbar-width: none; }
+  .screen::-webkit-scrollbar { display: none; }
+
+  /* ============ 标题行 ============ */
+  .title-row { display: flex; align-items: center; gap: 12px; }
+  .app-icon {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--indigo), var(--violet));
+    display: grid; place-items: center; flex-shrink: 0;
+  }
+  .app-icon svg { width: 20px; height: 20px; }
+  .title-row .t1 { font-size: 18px; font-weight: 700; }
+  .title-row .t2 { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+
+  /* ============ Hero 状态区 ============ */
+  .hero { margin-top: 20px; text-align: center; padding: 8px 0 4px; }
+  .hero .stage-text { font-size: 26px; font-weight: 800; letter-spacing: 0.01em; }
+  .hero .stage-sub { font-size: 13px; color: var(--text-2); margin-top: 6px; }
+
+  .paircode {
+    margin-top: 18px; padding: 20px 16px 16px;
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+  }
+  .paircode .pc-label { font-size: 11px; color: var(--text-3); letter-spacing: 0.14em; }
+  .paircode .pc-digits {
+    font-size: 42px; font-weight: 800; color: var(--cyan);
+    letter-spacing: 0.22em; margin: 10px 0 4px; text-indent: 0.22em;
+    font-variant-numeric: tabular-nums;
+    font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  }
+  .paircode .pc-hint { font-size: 12px; color: var(--text-2); }
+  .warn {
+    margin-top: 10px; padding: 10px 12px; border-radius: 12px;
+    background: rgba(252, 211, 77, 0.08); border: 1px solid rgba(252, 211, 77, 0.25);
+    color: var(--amber); font-size: 12px; text-align: left; line-height: 1.5;
+  }
+
+  /* ============ 主按钮 ============ */
+  .btn-main {
+    margin-top: 16px; width: 100%; height: 54px; border: none;
+    border-radius: var(--radius); background: var(--cyan); color: var(--cyan-ink);
+    font-size: 16px; font-weight: 700; letter-spacing: 0.02em;
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .btn-main:active { background: var(--cyan-deep); }
+
+  /* ============ 分区 + hairline 列表 ============ */
+  .section { margin-top: 26px; }
+  .section-label {
+    font-size: 12px; color: var(--text-3); letter-spacing: 0.1em;
+    text-transform: uppercase; margin-bottom: 4px;
+  }
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    min-height: 60px; padding: 10px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .row:last-child { border-bottom: none; }
+  .row .row-text { flex: 1; min-width: 0; }
+  .row .row-title { font-size: 15px; color: var(--text-1); }
+  .row .row-sub { font-size: 12px; color: var(--text-2); margin-top: 3px; line-height: 1.5; }
+  .row .row-extra { flex-shrink: 0; }
+
+  /* 分段控件（画质） */
+  .segmented {
+    display: flex; background: var(--surface-2);
+    border: 1px solid var(--hairline); border-radius: 12px; padding: 3px;
+  }
+  .segmented .seg {
+    padding: 7px 14px; font-size: 13px; color: var(--text-2);
+    border-radius: 9px; text-align: center; transition: all .15s;
+  }
+  .segmented .seg.on {
+    background: rgba(34, 211, 238, 0.12); color: var(--cyan);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.45);
+  }
+
+  /* Switch */
+  .switch {
+    width: 46px; height: 28px; border-radius: 14px;
+    background: var(--cyan); position: relative; flex-shrink: 0;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; right: 2px;
+    width: 24px; height: 24px; border-radius: 50%; background: #fff;
+  }
+  .switch.off { background: #2E2B5C; }
+  .switch.off::after { right: auto; left: 2px; }
+
+  /* 次按钮（连接管理/文件） */
+  .btn-ghost {
+    height: 36px; padding: 0 14px; border-radius: 10px;
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    color: var(--cyan); font-size: 13px; display: inline-grid; place-items: center;
+  }
+  .btn-ghost.done { color: var(--text-2); }
+
+  .foot-note {
+    margin-top: 22px; text-align: center;
+    font-size: 11px; color: var(--text-3); line-height: 1.6;
+  }
+
+  /* 标注 */
+  .callouts { max-width: 1200px; margin: 48px auto 0; }
+  .callouts h2 { font-size: 18px; margin-bottom: 16px; }
+  .callout-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .callout {
+    border: 1px solid var(--hairline); border-radius: 12px; padding: 16px;
+    background: var(--surface);
+  }
+  .callout b { color: var(--cyan); font-size: 13px; }
+  .callout p { color: var(--text-2); font-size: 12px; line-height: 1.7; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div class="page-head">
+  <h1>QPM 发送端 · 重设计 v0</h1>
+  <p>Redesign · Preserve：保留全部功能契约（控件 id、CastService 状态链路、配对码单点真源），只重排视觉语言。核心动作：去除卡片泛滥、主操作置顶为唯一实底按钮、配对码 hero 化、设置区改为 hairline 列表 + 分段控件。</p>
+  <div class="decisions">
+    <div class="decision"><b>色彩</b><span>cyan #22D3EE 只服务两个对象：主按钮与配对码。其余一律 surface / hairline / 文字三级灰阶。紫渐变按钮退役。</span></div>
+    <div class="decision"><b>圆角</b><span>统一 16dp（按钮 / hero 容器 / 分段控件 12dp），列表行直角 + hairline。原 16/20/24 三种圆角归一。</span></div>
+    <div class="decision"><b>层级</b><span>状态 26sp 800 → 配对码 42sp 等宽 tabular → 行标题 15sp → 副文 12sp，比例 ≥ 2×。</span></div>
+    <div class="decision"><b>结构</b><span>标题行 → Hero（状态/配对码）→ 主按钮 → hairline 分区列表 → 脚注。一屏一焦点，焦点随状态切换。</span></div>
+  </div>
+</div>
+
+<div class="stage">
+
+  <!-- ============ 态一：未开始 ============ -->
+  <div class="frame-col">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="title-row">
+          <div class="app-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M12 19.5v.01"/></svg>
+          </div>
+          <div>
+            <div class="t1">发送端</div>
+            <div class="t2">本机作为被镜像的手机</div>
+          </div>
+        </div>
+
+        <div class="hero">
+          <div class="stage-text">未开始投屏</div>
+          <div class="stage-sub">点下方按钮授权录屏，开始把本机画面推向接收端</div>
+        </div>
+
+        <button class="btn-main">开始投屏</button>
+
+        <div class="section">
+          <div class="section-label">投屏设置</div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">画质</div>
+              <div class="row-sub">接收端卡顿时选「流畅」</div>
+            </div>
+            <div class="row-extra segmented">
+              <div class="seg">流畅</div>
+              <div class="seg on">均衡</div>
+              <div class="seg">高清</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">防止自动息屏</div>
+              <div class="row-sub">录屏在熄屏后会停，开启后投屏期间屏幕不会自动熄灭</div>
+            </div>
+            <div class="row-extra switch"><div></div></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-label">接收端</div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">连接管理</div>
+              <div class="row-sub">投屏中可扫描局域网接收端，只放行勾选的设备</div>
+            </div>
+            <div class="row-extra btn-ghost">扫描</div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">文件共享</div>
+              <div class="row-sub">接收端「文件」功能所需，仅限共享存储根目录</div>
+            </div>
+            <div class="row-extra btn-ghost">授权</div>
+          </div>
+        </div>
+
+        <div class="foot-note">投屏时请保持本 App 在前台<br>并在系统设置里允许其后台运行</div>
+      </div>
+    </div>
+    <div class="frame-label"><b>态一 · 未开始</b> — 一焦点一按钮，设置退后</div>
+  </div>
+
+  <!-- ============ 态二：投屏中 ============ -->
+  <div class="frame-col">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="screen">
+        <div class="title-row">
+          <div class="app-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M12 19.5v.01"/></svg>
+          </div>
+          <div>
+            <div class="t1">发送端</div>
+            <div class="t2">本机作为被镜像的手机</div>
+          </div>
+        </div>
+
+        <div class="hero">
+          <div class="stage-text" style="color: var(--cyan)">投屏中</div>
+          <div class="stage-sub">等待接收端连接…</div>
+          <div class="paircode">
+            <div class="pc-label">配 对 码</div>
+            <div class="pc-digits">418206</div>
+            <div class="pc-hint">接收端输入此码后才能看画面并控制</div>
+            <div class="warn">控制权限未开启，对方只能看不能操作 · 点此开启</div>
+          </div>
+        </div>
+
+        <button class="btn-main">停止投屏</button>
+
+        <div class="section">
+          <div class="section-label">投屏设置</div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">画质</div>
+              <div class="row-sub">下次开始投屏时生效</div>
+            </div>
+            <div class="row-extra segmented">
+              <div class="seg">流畅</div>
+              <div class="seg on">均衡</div>
+              <div class="seg">高清</div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">防止自动息屏</div>
+              <div class="row-sub">投屏期间屏幕不会自动熄灭</div>
+            </div>
+            <div class="row-extra switch"><div></div></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-label">接收端</div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">连接管理</div>
+              <div class="row-sub">1 台已连接 · 192.168.1.12</div>
+            </div>
+            <div class="row-extra btn-ghost">管理</div>
+          </div>
+          <div class="row">
+            <div class="row-text">
+              <div class="row-title">文件共享</div>
+              <div class="row-sub">接收端「文件」功能所需，仅限共享存储根目录</div>
+            </div>
+            <div class="row-extra btn-ghost done">已授权</div>
+          </div>
+        </div>
+
+        <div class="foot-note">投屏时请保持本 App 在前台<br>并在系统设置里允许其后台运行</div>
+      </div>
+    </div>
+    <div class="frame-label"><b>态二 · 投屏中</b> — 配对码成为 hero，警告内联</div>
+  </div>
+</div>
+
+<div class="callouts">
+  <h2>关键变化对照</h2>
+  <div class="callout-grid">
+    <div class="callout"><b>① 卡片泛滥 → hairline 分区</b><p>原 7 张 20dp 圆角大卡（且卡内嵌卡）全部拆除。屏幕按「投屏设置 / 接收端」两个语义分区平铺，区间仅一条 1px 分隔线，唯一保留的容器是配对码 hero 块。</p></div>
+    <div class="callout"><b>② 紫渐变主按钮 → cyan 实底</b><p>主按钮从「indigo→violet 渐变」改为 cyan 实底 + 深青字，是全屏唯一实色块， Squint test 下第一眼落点。按压态 cyan-deep。</p></div>
+    <div class="callout"><b>③ RadioGroup → 分段控件</b><p>画质三档从系统 RadioButton 改为 iOS 风分段控件：surface-2 底、选中段 cyan 描边 + 12% cyan 底。与设计语言同源，一行占位更窄。</p></div>
+    <div class="callout"><b>④ 配对码 hero 化</b><p>42sp 等宽 tabular 数字、0.22em 字距、青色，独立容器承载——从「状态栏里的一串字符」升格为投屏中的视觉主角，与「不一致」问题同步根治（唯一展示位）。</p></div>
+    <div class="callout"><b>⑤ 设置行统一</b><p>防息屏 / 连接管理 / 文件共享统一为「标题 + 副标题 + 右侧控件」60dp 行；文件授权从整卡 + 大按钮降为行内 ghost 按钮。</p></div>
+    <div class="callout"><b>⑥ 无障碍警告内联</b><p>原「覆写状态栏文案 + 独立大按钮」双入口，改为配对码卡内一条 amber 警告行，未开启才出现，整行可点跳系统设置。</p></div>
+  </div>
+</div>
+
+</body>
+</html>

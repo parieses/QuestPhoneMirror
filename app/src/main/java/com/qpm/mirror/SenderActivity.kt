@@ -29,7 +29,9 @@ class SenderActivity : AppCompatActivity() {
 
     private lateinit var tvStatus: TextView
     private lateinit var tvPairCode: TextView
-    private lateinit var btnAccessibility: Button
+    private lateinit var tvWarn: TextView
+    private lateinit var pairCard: LinearLayout
+    private lateinit var btnStart: Button
     private lateinit var rgQuality: RadioGroup
     private lateinit var swKeepAwake: Switch
     private lateinit var btnFilePerm: Button
@@ -76,8 +78,11 @@ class SenderActivity : AppCompatActivity() {
                     putExtra(CastService.EXTRA_KEEP_AWAKE, swKeepAwake.isChecked)
                 }
             )
-            tvPairCode.text = pairCode
-            tvStatus.text = "投屏中，配对码 $pairCode，去接收端上打开「我是接收端」"
+            // 配对码只在 pairCard 展示；tvStatus 不写码，避免两个真源不一致
+            tvStatus.text = "投屏中，等待接收端连接…"
+            // 服务是异步拉起的，此刻 currentPairCode 可能还没被赋值，
+            // 必须用本地已生成的码直接进「投屏中」态，不能走查询式刷新
+            showCastingUi(pairCode)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,7 +92,9 @@ class SenderActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         tvStatus = findViewById(R.id.tvStatus)
         tvPairCode = findViewById(R.id.tvPairCode)
-        btnAccessibility = findViewById(R.id.btnAccessibility)
+        tvWarn = findViewById(R.id.tvWarn)
+        pairCard = findViewById(R.id.pairCard)
+        btnStart = findViewById(R.id.btnStart)
         rgQuality = findViewById(R.id.rgQuality)
         swKeepAwake = findViewById(R.id.swKeepAwake)
         btnFilePerm = findViewById(R.id.btnFilePerm)
@@ -96,6 +103,10 @@ class SenderActivity : AppCompatActivity() {
         llReceivers = findViewById(R.id.llReceivers)
 
         btnFilePerm.setOnClickListener { requestFileAccess() }
+        // 无障碍警告行整体可点，跳系统设置（替代原来的独立大按钮）
+        tvWarn.setOnClickListener {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
         btnScanReceivers.setOnClickListener {
             tvReceiverStatus.text = "正在扫描局域网接收端…"
             CastService.discoverReceivers { list ->
@@ -105,13 +116,17 @@ class SenderActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<Button>(R.id.btnStart).setOnClickListener {
-            val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            projectionLauncher.launch(pm.createScreenCaptureIntent())
-        }
-
-        btnAccessibility.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        btnStart.setOnClickListener {
+            if (CastService.currentPairCode != null) {
+                // 投屏中 → 停止（onDestroy 会走 stopAll 清理全部资源）
+                stopService(Intent(this, CastService::class.java))
+                CastService.currentPairCode = null
+                tvStatus.text = "已停止投屏"
+                refreshCastingUi()
+            } else {
+                val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                projectionLauncher.launch(pm.createScreenCaptureIntent())
+            }
         }
     }
 
@@ -141,6 +156,31 @@ class SenderActivity : AppCompatActivity() {
             pairCode = it
             tvPairCode.text = it
         }
+        refreshCastingUi()
+    }
+
+    /**
+     * 按 CastService 运行状态刷新「投屏中」相关 UI。
+     * currentPairCode 非空即服务在跑（stopAll 会置空），作为唯一状态判据。
+     * 用于 onResume / 状态推送等「查询当前真相」的场景。
+     */
+    private fun refreshCastingUi() {
+        val code = CastService.currentPairCode
+        if (code != null) {
+            showCastingUi(code)
+        } else {
+            pairCard.visibility = View.GONE
+            btnStart.text = "开始投屏"
+            tvPairCode.text = "------"
+        }
+    }
+
+    /** 无条件进入「投屏中」UI 态（本地已知配对码时用，不等服务）。 */
+    private fun showCastingUi(code: String) {
+        pairCard.visibility = View.VISIBLE
+        btnStart.text = "停止投屏"
+        pairCode = code
+        tvPairCode.text = code
     }
 
     /** 文件访问权限状态（接收端「文件」功能前提）。 */
@@ -225,20 +265,8 @@ class SenderActivity : AppCompatActivity() {
         // 这不受部分 ROM（如小米澎湃OS）对 getInstalledAccessibilityServiceList 的侧载过滤影响。
         val connected = QpmControlService.instance != null
         val enabledBySetting = isAccessibilityEnabled(this)
-        when {
-            connected -> {
-                btnAccessibility.text = "无障碍：已启用 ✓"
-            }
-            enabledBySetting -> {
-                btnAccessibility.text = "无障碍：已开启 ✓"
-            }
-            else -> {
-                btnAccessibility.text = "开启控制权限（无障碍）"
-            }
-        }
-        if (!connected) {
-            tvStatus.text = "注意：未开启「QPM 控制服务」时，对方只能看不能操作"
-        }
+        // 警告只在未开启时出现，不覆写 tvStatus（状态条只承载投屏状态事件）
+        tvWarn.visibility = if (connected || enabledBySetting) View.GONE else View.VISIBLE
     }
 
     private fun isAccessibilityEnabled(ctx: Context): Boolean {
