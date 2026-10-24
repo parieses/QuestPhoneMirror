@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider：把下载好的更新包（外部私有 Download 目录）安全分享给系统安装器 -->
+<!-- FileProvider：把下载好的更新包（外部私有 Download 目录）安全分享给系统安装器；
+     诊断日志与崩溃记录同样经它分享（内部 files/logs + 外部私有 crashes） -->
 <paths>
     <external-files-path
         name="update_apk"
         path="Download/" />
+    <external-files-path
+        name="crashes"
+        path="crashes/" />
+    <files-path
+        name="logs"
+        path="logs/" />
 </paths>

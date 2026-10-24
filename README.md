@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.14-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.15-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -170,7 +170,21 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 ## 📝 更新日志
 
-### v0.14（本轮）
+### v0.15（本轮）
+
+**新功能**
+- **App 内诊断日志**：入口页新增「诊断日志」卡片——查看当天日志尾部、一键分享（经 FileProvider，可发微信/QQ）、查看/分享崩溃记录、清空当天。全模块日志统一走 `QpmLog` 双通道（logcat + `files/logs/qpm-日期.log`，同步写保证崩溃前最后几行落盘、保留 3 天、单文件 8MB 封顶），没有电脑也能抓 log
+- **全局崩溃捕获**：`QpmApp` 安装未捕获异常处理器，任何线程的致命异常都会把完整堆栈同时写进 logcat、日志文件和 `crashes/crash-*.log`——「已连接却退回主界面」这类进程级故障终于有据可查
+- **连接链路全节点日志**：发现循环进入/退出、`connectTo` 参数、TCP 已连接、HELLO 已发送、加密建立/回落（带头型）、主循环首帧、每 3s 收帧汇总、EOF/读帧异常（带累计帧数）全部落日志
+
+**修复**
+- 手机横屏必断投屏：旋转重建时旧编码器的异步回调（`onError`/`onFrame`）可能晚于新编码器建成才触发，旧实现里一个迟到的 `onError` 会 `post { stopAll() }` 把刚建好的新流水线拆掉——与重建成败无关，所以「一转屏就断」。现按编码器代际丢弃旧实例的迟到回调；同时把拆除顺序对调为**先停编码器、再释放显示**（编码器运行中释放其输入 VirtualDisplay 会 abandon 输入 surface、随即抛 `onError`，旧顺序正是触发器）
+- 编码器回调线程未捕获异常直接杀进程：`onOutputBufferAvailable` 整体兜底（旧实现只包了 `releaseOutputBuffer`，漏了 `getOutputBuffer`——停编解码器后的在途回调足以致命）；`onOutputFormatChanged`、`onError` 同样加固
+- 接收端 `surfaceCreated` 里解码器回调直接 `runOnUiThread`，界面销毁后仍会触碰已回收视图；改为带销毁守卫的 `runUi`，并补齐缺失的 `onDestroy`（置销毁标志、清定时器）
+
+* * *
+
+### v0.14
 
 **修复**
 - 接收端配对成功后立马断开、退回主界面（手机 / Quest 作接收端均复现）：根因是配对成功后首帧数据流上有三处未防护的异常出口——解码器 `feed()` 的 `buffer.put()` 遇超大关键帧抛 `BufferOverflowException` 打断整条连接；读循环帧分发无兜底、一帧异常即断流；编解码回调线程 `releaseOutputBuffer` 未捕获 `IllegalStateException` 直接杀进程。现已全部加固：超大帧丢载荷但归还输入缓冲（防缓冲池枯竭黑屏）、单帧异常只丢该帧、回调异常全部兜底
@@ -316,14 +330,17 @@ app/        单 App 双角色
   TouchMapper       视图坐标 → 手机屏幕坐标
   UpdateChecker     GitHub Releases 查询 + 版本比较 + APK 资产挑选
   AppUpdater        DownloadManager 下载 + FileProvider 安装 + 权限引导
+  QpmApp            全局未捕获异常捕获（崩溃堆栈落盘 crashes/）
+  QpmLog            日志双通道：logcat + files/logs/qpm-日期.log（同步写、3 天保留、8MB 封顶）
+  LogViewerActivity 诊断日志页（查看 / 分享 / 崩溃记录 / 清空）
 .github/workflows/build-apk.yml   push tag v* 自动打包 debug + release APK 并挂 Release
 ```
 
 ### 版本发布
 
 ```bash
-git tag v0.14        # 版本号唯一来源就是 git tag
-git push origin v0.14
+git tag v0.15        # 版本号唯一来源就是 git tag
+git push origin v0.15
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**

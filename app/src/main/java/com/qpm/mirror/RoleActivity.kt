@@ -72,6 +72,9 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
             startActivity(Intent(this, ReceiverActivity::class.java))
         }
         cardUpdate.setOnClickListener { checkUpdate(manual = true) }
+        findViewById<View>(R.id.cardLog).setOnClickListener {
+            startActivity(Intent(this, LogViewerActivity::class.java))
+        }
     }
 
     override fun onResume() {

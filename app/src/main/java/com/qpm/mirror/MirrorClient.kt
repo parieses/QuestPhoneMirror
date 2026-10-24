@@ -1,6 +1,5 @@
 package com.qpm.mirror
 
-import android.util.Log
 import com.qpm.protocol.Decoders
 import com.qpm.protocol.Discovery
 import com.qpm.protocol.FileChunk
@@ -72,6 +71,7 @@ class MirrorClient(
     fun start() {
         Thread {
             try {
+                QpmLog.i(TAG, "start：进入 UDP 自动发现循环")
                 while (!stopped) {
                     onStatus("正在搜索发送端…")
                     val devices = Discovery.scan(1500)
@@ -87,8 +87,10 @@ class MirrorClient(
                     return@Thread // 等用户选择后由 connect() 发起
                 }
             } catch (e: Exception) {
+                QpmLog.w(TAG, "start：发现/连接线程异常", e)
                 onStatus("连接中断：${e.message}")
             } finally {
+                QpmLog.i(TAG, "start：线程退出，回调 onDisconnected")
                 onDisconnected()
             }
         }.start()
@@ -103,17 +105,21 @@ class MirrorClient(
                 // 仅当网络内确有多个发送端（发送端拒绝空配对码）才回落到「输入配对码」界面。
                 connectTo(host, port, autoPair = pairCode == null, pairCode = pairCode)
             } catch (e: Exception) {
+                QpmLog.w(TAG, "connect：连接线程异常", e)
                 onStatus("连接中断：${e.message}")
             } finally {
+                QpmLog.i(TAG, "connect：线程退出，回调 onDisconnected")
                 onDisconnected()
             }
         }.start()
     }
 
     private fun connectTo(host: String, port: Int, autoPair: Boolean, pairCode: String? = null) {
+        QpmLog.i(TAG, "connectTo: $host:$port autoPair=$autoPair 带码=${pairCode != null} 加密=$cryptoEnabled")
         this.host = host
         this.port = port
         val s = Socket(host, port).apply { tcpNoDelay = true }
+        QpmLog.i(TAG, "TCP 已连接: ${s.inetAddress?.hostAddress}:$port")
         socket = s
         out = s.getOutputStream()
 
@@ -125,7 +131,10 @@ class MirrorClient(
         // 内联消费它（不过 channel.open），双方加解密计数器从 0 起严格对齐；
         // 若把它放到握手后加密发送，它会占用计数器槽位导致后续帧 nonce 错位、
         // GCM 校验失败，表现为「卡在正在配对」。
-        if (helloName.isNotBlank()) writeCipher(Proto.hello(helloName))
+        if (helloName.isNotBlank()) {
+            writeCipher(Proto.hello(helloName))
+            QpmLog.i(TAG, "已发送 HELLO（明文，设备名=$helloName）")
+        }
 
         // 密钥交换握手：先发本方 EC(secp256r1) 临时公钥（明文，KEY_EXCHANGE 帧永不被加密）。
         // 任意一步失败都降级为明文，绝不抛异常卡死连接。
@@ -141,20 +150,20 @@ class MirrorClient(
                 val first = runCatching { reader.read() }.getOrNull()
                 runCatching { s.soTimeout = 0 }
                 if (first == null) {
-                    Log.w(TAG, "未收到对端 KE（超时），回退明文通道")
+                    QpmLog.w(TAG, "未收到对端 KE（超时），回退明文通道")
                 } else if (first.type == Type.KEY_EXCHANGE) {
                     val session = runCatching { Crypto.deriveSessionKey(kp, first.body) }.getOrNull()
                     if (session != null) {
                         channel.arm(session)
-                        Log.i(TAG, "加密通道已建立（AES-256-GCM）")
+                        QpmLog.i(TAG, "加密通道已建立（AES-256-GCM）")
                     } else {
-                        Log.w(TAG, "密钥派生失败，回退明文通道")
+                        QpmLog.w(TAG, "密钥派生失败，回退明文通道")
                         onStatus("QPM_CRYPTO_OFF")
                         s.close()
                         return
                     }
                 } else {
-                    Log.w(TAG, "对端不支持加密，回退明文通道")
+                    QpmLog.w(TAG, "对端不支持加密（首帧 type=${first.type}），回退明文通道")
                     pending = first
                 }
             }
@@ -169,17 +178,45 @@ class MirrorClient(
             writeCipher(Proto.pair(pairCode))
         }
         onStatus(if (autoPair) "正在免密直连…" else "已连接，请输入发送端显示的配对码")
+        QpmLog.i(TAG, "进入主循环，等待首帧")
+
+        // 帧计数：每 3s 汇总一次，用于判断「连接成功后到底有没有在收帧」
+        var frameCount = 0
+        var lastFrameLogAt = System.currentTimeMillis()
+        var firstFrameLogged = false
 
         while (true) {
-            val raw = pending ?: (reader.read() ?: break)
+            val raw = try {
+                pending ?: (reader.read() ?: run {
+                    QpmLog.i(TAG, "对端关闭连接（EOF），主循环退出，共收帧 $frameCount")
+                    break
+                })
+            } catch (e: Exception) {
+                QpmLog.w(TAG, "读帧异常，连接断开（已收帧 $frameCount）", e)
+                onStatus("连接中断：${e.message}")
+                break
+            }
             pending = null
             val frame = channel.open(raw)
+            if (!firstFrameLogged) {
+                firstFrameLogged = true
+                QpmLog.i(TAG, "收到首帧 type=${frame.type} size=${frame.body.size}")
+            }
             // 单帧处理兜底：解码/回调异常只丢这一帧并记日志，
             // 绝不让异常逃逸到网络线程把整条连接打断（表现为「配对成功后立马断」）
             try {
                 when (frame.type) {
                     Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
-                    Type.VIDEO_FRAME -> decoder?.feed(frame.body)
+                    Type.VIDEO_FRAME -> {
+                        decoder?.feed(frame.body)
+                        frameCount++
+                        val now = System.currentTimeMillis()
+                        if (now - lastFrameLogAt >= 3000) {
+                            QpmLog.i(TAG, "最近 3s 收视频帧 ${frameCount} 个")
+                            frameCount = 0
+                            lastFrameLogAt = now
+                        }
+                    }
                     Type.SCREEN_INFO -> {
                         val (w, h, dpi) = Decoders.screenInfo(frame)
                         phoneScreenW = w
@@ -202,7 +239,7 @@ class MirrorClient(
                     Type.STATS -> onStats(Decoders.statsOf(frame))
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "帧处理异常 type=${frame.type}: ${e.message}")
+                QpmLog.w(TAG, "帧处理异常 type=${frame.type}: ${e.message}")
             }
         }
     }

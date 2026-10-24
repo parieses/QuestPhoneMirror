@@ -2,7 +2,6 @@ package com.qpm.mirror
 
 import android.media.MediaCodec
 import android.media.MediaFormat
-import android.util.Log
 import android.view.Surface
 import com.qpm.protocol.VFlag
 import java.nio.ByteBuffer
@@ -64,7 +63,7 @@ class H264Decoder(
         }
 
         override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
-            Log.e(TAG, "onError: ${e.diagnosticInfo ?: e.message}")
+            QpmLog.e(TAG, "onError: ${e.diagnosticInfo ?: e.message}")
             onError(e.diagnosticInfo ?: e.message ?: "未知解码器错误")
         }
     }
@@ -80,7 +79,7 @@ class H264Decoder(
             )
             codec.start()
         } catch (e: Exception) {
-            Log.e(TAG, "初始化失败: ${e.message}")
+            QpmLog.e(TAG, "初始化失败: ${e.message}")
             alive = false
             runCatching { codec.release() }
             throw e
@@ -112,7 +111,7 @@ class H264Decoder(
             // 个别机型/高分辨率下输入缓冲小于关键帧：丢载荷但必须归还缓冲，
             // 否则缓冲池逐个泄漏、最终无缓冲可用永久黑屏；同时绝不让 BufferOverflowException
             // 逃逸到网络线程把整条连接打断（表现为「配对成功后立马断」）
-            Log.w(TAG, "输入缓冲不足，丢弃 ${data.size} 字节帧（容量 ${buffer.capacity()}）")
+            QpmLog.w(TAG, "输入缓冲不足，丢弃 ${data.size} 字节帧（容量 ${buffer.capacity()}）")
             runCatching { codec.queueInputBuffer(index, 0, 0, pts, 0) }
         }
     }

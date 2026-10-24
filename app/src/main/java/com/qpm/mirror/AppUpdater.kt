@@ -12,7 +12,6 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -210,7 +209,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
         conn.disconnect()
         code in 200..399 || code == 405
     } catch (e: Exception) {
-        Log.d(TAG, "probe failed for $url: ${e.message}")
+        QpmLog.d(TAG, "probe failed for $url: ${e.message}")
         false
     }
 
@@ -241,7 +240,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
                 )
             }
         } catch (e: Exception) {
-            Log.w(TAG, "request build failed: ${e.message}")
+            QpmLog.w(TAG, "request build failed: ${e.message}")
             listener?.onDownloadFailed(activity.getString(R.string.update_bad_url))
             return
         }
@@ -249,7 +248,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
         val id = try {
             dm.enqueue(request)
         } catch (e: Exception) {
-            Log.w(TAG, "enqueue error: ${e.message}")
+            QpmLog.w(TAG, "enqueue error: ${e.message}")
             listener?.onDownloadFailed(activity.getString(R.string.update_enqueue_fail, e.message))
             return
         }
@@ -279,7 +278,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
             )
             receiverRegistered = true
         } catch (e: Exception) {
-            Log.w(TAG, "registerReceiver failed: ${e.message}")
+            QpmLog.w(TAG, "registerReceiver failed: ${e.message}")
         }
     }
 
@@ -304,7 +303,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
             try {
                 activity.unregisterReceiver(downloadReceiver)
             } catch (e: IllegalArgumentException) {
-                Log.d(TAG, "receiver not registered: ${e.message}")
+                QpmLog.d(TAG, "receiver not registered: ${e.message}")
             }
             receiverRegistered = false
         }
@@ -320,7 +319,7 @@ class AppUpdater(private val activity: AppCompatActivity) {
         val uri = try {
             FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
         } catch (e: IllegalArgumentException) {
-            Log.w(TAG, "fileprovider uri failed: ${e.message}")
+            QpmLog.w(TAG, "fileprovider uri failed: ${e.message}")
             toast(activity.getString(R.string.update_install_path_fail))
             return
         }

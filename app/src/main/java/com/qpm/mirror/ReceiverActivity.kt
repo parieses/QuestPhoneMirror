@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.SurfaceHolder
@@ -96,6 +95,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        QpmLog.i(TAG, "onCreate：接收端界面创建（savedInstanceState=${savedInstanceState != null}）")
         setContentView(R.layout.activity_receiver)
         // 接收端屏幕/2D 面板空闲会变暗，观看期间保持常亮
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -160,22 +160,24 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        QpmLog.i(TAG, "surfaceCreated：Surface 就绪，初始化解码器")
         destroyed = false
         uiHandler.removeCallbacks(pairTimeoutRunnable)
         val dec = try {
             H264Decoder(
                 holder.surface,
-                { w, h -> runOnUiThread { fitSurface(w, h) } }
+                { w, h -> runUi { fitSurface(w, h) } }
             ) { msg ->
-                Log.e(TAG, "解码器错误: $msg")
-                runOnUiThread { hint.text = getString(R.string.receiver_decoder_error, msg) }
+                QpmLog.e(TAG, "解码器错误: $msg")
+                runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "解码器初始化失败: ${e.message}")
+            QpmLog.e(TAG, "解码器初始化失败: ${e.message}", e)
             tvStage.text = getString(R.string.receiver_decoder_fail)
             tvStageHint.text = e.message ?: getString(R.string.receiver_h264_unsupported)
             return
         }
+        QpmLog.i(TAG, "解码器初始化成功，开始连接")
         decoder = dec
 
         mapper = TouchMapper(
@@ -191,6 +193,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     /** 停掉旧连接并用同一套回调建新客户端；host 为 null 时走 UDP 自动发现。 */
     private fun startClient(dec: H264Decoder, host: String?) {
+        QpmLog.i(TAG, "startClient：host=$host 加密=$useEncryption")
         client?.stop()
         paired = false
         // 任一连接入口都先尝试免密直连（autoPair 由 MirrorClient 内部按是否带码决定），
@@ -232,12 +235,12 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     private fun onPairTimeout() {
         if (destroyed || paired) return
-        Log.w(TAG, "配对超时（${PAIR_TIMEOUT_MS}ms 未收到 PAIR_RESULT）")
+        QpmLog.w(TAG, "配对超时（${PAIR_TIMEOUT_MS}ms 未收到 PAIR_RESULT）")
         // 加密若一直握手卡住，自动降级为明文并在下次刷新时生效
         if (useEncryption && !cryptoDisabled) {
             useEncryption = false
             cryptoDisabled = true
-            Log.w(TAG, "配对超时，禁用加密通道，建议点刷新以明文重连")
+            QpmLog.w(TAG, "配对超时，禁用加密通道，建议点刷新以明文重连")
         }
         statusPanel.visibility = View.VISIBLE
         tvStage.text = getString(R.string.receiver_disconnected)
@@ -253,7 +256,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private fun onClipboardText(text: String) {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         runCatching { cm.setPrimaryClip(ClipData.newPlainText("QPM", text)) }
-            .onFailure { Log.w(TAG, "写剪贴板失败: ${it.message}") }
+            .onFailure { QpmLog.w(TAG, "写剪贴板失败: ${it.message}") }
         hint.text = getString(R.string.receiver_clip_copied)
     }
 
@@ -328,13 +331,14 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun onStatus(s: String) {
+        QpmLog.i(TAG, "onStatus: $s")
         // 内部信号：加密握手失败。不展示给用户，仅降级为明文并标记本次连接失败，便于断开后自动转明文重连
         if (s == "QPM_CRYPTO_OFF") {
             if (useEncryption && !cryptoDisabled) {
                 useEncryption = false
                 cryptoDisabled = true
                 cryptoFailedThisConnection = true
-                Log.w(TAG, "加密握手失败，已禁用加密，断开后将自动以明文重连")
+                QpmLog.w(TAG, "加密握手失败，已禁用加密，断开后将自动以明文重连")
             }
             return
         }
@@ -377,6 +381,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun onPairResult(ok: Boolean) {
+        QpmLog.i(TAG, "onPairResult: ok=$ok")
         uiHandler.removeCallbacks(pairTimeoutRunnable)
         paired = ok
         if (ok) {
@@ -412,10 +417,11 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     private fun onDisconnected() {
+        QpmLog.i(TAG, "onDisconnected：连接断开（cryptoFailed=$cryptoFailedThisConnection destroyed=$destroyed）")
         uiHandler.removeCallbacks(pairTimeoutRunnable)
         // 若本次连接因加密握手失败断开，自动以明文重连一次（明文通道已验证可用），避免用户卡在配对
         if (cryptoFailedThisConnection && !destroyed && decoder != null) {
-            Log.i(TAG, "加密失败断开，自动以明文重连")
+            QpmLog.i(TAG, "加密失败断开，自动以明文重连")
             hint.text = getString(R.string.receiver_crypto_off)
             startClient(decoder!!, null)
             return
@@ -429,7 +435,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     /** 发送端在「连接管理」里取消了本机的勾选：明确告知用户原因。 */
     private fun onRejected(reason: String) {
-        Log.i(TAG, "rejected by sender: $reason")
+        QpmLog.i(TAG, "rejected by sender: $reason")
         statusPanel.visibility = View.VISIBLE
         tvStage.text = getString(R.string.receiver_rejected)
         // 拒绝原因是发送端下发的内部信号，按白名单场景给出本地化引导，原文进日志
@@ -441,6 +447,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
     override fun onStart() {
         super.onStart()
+        QpmLog.i(TAG, "onStart")
         // 页面在前台期间持续宣告本机存在，供发送端连接管理扫描
         beaconThread = Thread { Discovery.broadcastReceiverLoop(Build.MODEL ?: getString(R.string.receiver_device_name)) }.apply {
             start()
@@ -448,9 +455,19 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     }
 
     override fun onStop() {
+        QpmLog.i(TAG, "onStop")
         beaconThread?.interrupt()
         beaconThread = null
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        QpmLog.i(TAG, "onDestroy：接收端界面销毁（isFinishing=$isFinishing）")
+        destroyed = true
+        uiHandler.removeCallbacks(pairTimeoutRunnable)
+        statsTimer?.cancel()
+        statsTimer = null
+        super.onDestroy()
     }
 
     /** 打开文件浏览器：复用当前连接的发送端与配对码。 */
@@ -610,6 +627,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        QpmLog.i(TAG, "surfaceDestroyed：Surface 销毁，停止解码与连接")
         destroyed = true
         uiHandler.removeCallbacks(pairTimeoutRunnable)
         statsTimer?.cancel()

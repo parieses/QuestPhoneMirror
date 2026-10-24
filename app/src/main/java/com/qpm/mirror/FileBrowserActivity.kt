@@ -4,7 +4,6 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.util.Log
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -208,7 +207,7 @@ class FileBrowserActivity : AppCompatActivity() {
                 MODE_SAVE -> dlStream?.write(chunk.chunk)
                 else -> dlBuffer?.write(chunk.chunk)
             }
-        }.onFailure { Log.e(TAG, "写入失败: ${it.message}") }
+        }.onFailure { QpmLog.e(TAG, "写入失败: ${it.message}") }
         if (dlTotal > 0 && dlMode != MODE_SAVE) {
             tvFileStatus.text = getString(R.string.file_downloading, dlReceived * 100 / dlTotal)
         }

@@ -196,4 +196,24 @@
     <string name="cast_noti_title">QPM 正在投屏</string>
     <string name="cast_clip_copied">已复制到手机剪贴板</string>
 
+    <!-- 诊断日志（入口页 -> 日志页） -->
+    <string name="role_logs">诊断日志</string>
+    <string name="role_logs_desc">查看 / 分享连接与崩溃日志，排障用</string>
+    <string name="log_title">诊断日志</string>
+    <string name="log_close">关闭</string>
+    <string name="log_info">显示最后 %1$d 行 · 当天日志 %2$d KB</string>
+    <string name="log_empty">暂无日志。去连一次投屏，再回到这里就能看到全过程记录。</string>
+    <string name="log_share">分享日志</string>
+    <string name="log_share_title">分享诊断日志</string>
+    <string name="log_share_empty">当天暂无日志，无可分享</string>
+    <string name="log_share_fail">分享失败，请重试</string>
+    <string name="log_crashes">崩溃记录</string>
+    <string name="log_crash_title">崩溃记录（%1$d 个，点按分享）</string>
+    <string name="log_crash_none">暂无崩溃记录</string>
+    <string name="log_clear">清空</string>
+    <string name="log_clear_title">清空当天日志？</string>
+    <string name="log_clear_msg">仅清空当天的日志文件，历史日期的文件不受影响。</string>
+    <string name="log_clear_ok">清空</string>
+    <string name="log_cancel">取消</string>
+    <string name="log_cleared">已清空当天日志</string>
 </resources>

@@ -1,6 +1,5 @@
 package com.qpm.mirror
 
-import android.util.Log
 import com.qpm.protocol.Frame
 import javax.crypto.SecretKey
 
@@ -77,7 +76,7 @@ internal class SecureChannel(private val sendDir: Int) {
             sendCounter++
             out
         } catch (e: Exception) {
-            Log.w(TAG, "seal 失败，降级明文: ${e.message}")
+            QpmLog.w(TAG, "seal 失败，降级明文: ${e.message}")
             disarm()
             wire
         }
@@ -91,7 +90,7 @@ internal class SecureChannel(private val sendDir: Int) {
             recvCounter++
             Frame(frame.type, plain)
         } catch (e: Exception) {
-            Log.w(TAG, "open 失败，降级明文: ${e.message}")
+            QpmLog.w(TAG, "open 失败，降级明文: ${e.message}")
             disarm()
             frame
         }

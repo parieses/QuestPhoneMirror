@@ -11,7 +11,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
@@ -121,7 +120,7 @@ class SenderActivity : AppCompatActivity() {
 
         btnStart.setOnClickListener {
             if (CastService.currentPairCode != null) {
-                // 投屏中 → 停止（onDestroy 会走 stopAll 清理全部资源）
+                // 投屏中 → 停止（CastService.stopAll 随服务停止清理全部资源）
                 stopService(Intent(this, CastService::class.java))
                 CastService.currentPairCode = null
                 tvStatus.text = getString(R.string.sender_status_stopped)
@@ -288,7 +287,7 @@ class SenderActivity : AppCompatActivity() {
                     toast(getString(R.string.sender_file_perm_hint))
                     return
                 } catch (e: ActivityNotFoundException) {
-                    Log.w(TAG, "file-access intent 不可用: ${intent.action}", e)
+                    QpmLog.w(TAG, "file-access intent 不可用: ${intent.action}", e)
                 }
             }
             toast(getString(R.string.sender_file_settings_fail))

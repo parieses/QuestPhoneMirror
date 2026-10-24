@@ -1,7 +1,6 @@
 package com.qpm.mirror
 
 import android.content.Context
-import android.util.Log
 import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -73,7 +72,7 @@ object UpdateChecker {
             // 404（无 Release / 仓库改私有）、403/429（限流）等可读原因
             return Result.Failed(e.userMessage)
         } catch (e: IOException) {
-            Log.w(TAG, "network failed: ${e.message}")
+            QpmLog.w(TAG, "network failed: ${e.message}")
             return Result.Failed(context.getString(R.string.update_net_fail))
         }
 
@@ -102,7 +101,7 @@ object UpdateChecker {
                 )
             )
         } catch (e: Exception) {
-            Log.w(TAG, "parse failed: ${e.message}")
+            QpmLog.w(TAG, "parse failed: ${e.message}")
             Result.Failed(context.getString(R.string.update_parse_fail))
         }
     }

@@ -4,7 +4,6 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.os.Bundle
-import android.util.Log
 import android.view.Surface
 
 /**
@@ -71,49 +70,57 @@ class H264Encoder(
             index: Int,
             info: MediaCodec.BufferInfo
         ) {
-            val buffer = codec.getOutputBuffer(index)
-            if (buffer == null || info.size <= 0) {
+            // codec 被 stop()/release() 后（旋转重建、停止投屏）回调线程仍可能收到在途缓冲，
+            // getOutputBuffer 会抛 IllegalStateException；回调线程未捕获异常直接杀进程，
+            // 整个方法体必须兜底（旧实现只包了 releaseOutputBuffer，漏了 getOutputBuffer）
+            runCatching {
+                val buffer = codec.getOutputBuffer(index)
+                if (buffer == null || info.size <= 0) {
+                    runCatching { codec.releaseOutputBuffer(index, false) }
+                    return@runCatching
+                }
+                val out = ByteArray(info.size)
+                buffer.position(info.offset)
+                buffer.get(out)
                 runCatching { codec.releaseOutputBuffer(index, false) }
-                return
-            }
-            val out = ByteArray(info.size)
-            buffer.position(info.offset)
-            buffer.get(out)
-            runCatching { codec.releaseOutputBuffer(index, false) }
 
-            val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
-            val isKey = (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+                val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                val isKey = (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
 
-            if (isConfig) {
-                // 这条 buffer 本身就是参数集（部分设备走这里），缓存起来
-                cacheCsd(out)
-                return
-            }
+                if (isConfig) {
+                    // 这条 buffer 本身就是参数集（部分设备走这里），缓存起来
+                    cacheCsd(out)
+                    return@runCatching
+                }
 
-            // 兜底：异步回调 onOutputFormatChanged 在部分设备上不触发，
-            // 这里在首个有效输出帧时直接从 codec.outputFormat 取一次 csd。
-            if (spsPps == null) {
-                runCatching { cacheFromFormat(codec.outputFormat) }
-            }
+                // 兜底：异步回调 onOutputFormatChanged 在部分设备上不触发，
+                // 这里在首个有效输出帧时直接从 codec.outputFormat 取一次 csd。
+                if (spsPps == null) {
+                    runCatching { cacheFromFormat(codec.outputFormat) }
+                }
 
-            var flags = 0
-            if (isKey) {
-                flags = flags or FLAG_KEY
-                // 每个 IDR 前先补发 SPS/PPS，保证中途连入的接收端也能解码
-                spsPps?.let { onFrame(it, it.size, FLAG_CONFIG, info.presentationTimeUs) }
-            }
-            onFrame(out, info.size, flags, info.presentationTimeUs)
+                var flags = 0
+                if (isKey) {
+                    flags = flags or FLAG_KEY
+                    // 每个 IDR 前先补发 SPS/PPS，保证中途连入的接收端也能解码
+                    spsPps?.let { onFrame(it, it.size, FLAG_CONFIG, info.presentationTimeUs) }
+                }
+                onFrame(out, info.size, flags, info.presentationTimeUs)
+            }.onFailure { QpmLog.w(TAG, "输出回调异常（codec 可能已停止）: ${it.message}") }
         }
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             // 用字面量键 "csd-0"/"csd-1"：MediaFormat.KEY_CSD_0 等常量在较新
             // compileSdk/AGP 组合下已被移除（改为 KEY_CSD_HEVC_* 等），用字符串键最稳。
-            cacheFromFormat(format)
+            runCatching { cacheFromFormat(format) }
+                .onFailure { QpmLog.w(TAG, "格式回调异常: ${it.message}") }
         }
 
         override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
-            Log.e(TAG, "onError: ${e.diagnosticInfo ?: e.message}")
-            onError(e.diagnosticInfo ?: e.message ?: "未知编码器错误")
+            QpmLog.e(TAG, "onError: ${e.diagnosticInfo ?: e.message}")
+            // 外层回调（ CastService 代际守卫/stopAll ）也不能让异常逃逸到回调线程
+            runCatching { onError(e.diagnosticInfo ?: e.message ?: "未知编码器错误") }
+                .onFailure { QpmLog.w(TAG, "onError 回调异常: ${it.message}") }
         }
     }
 
@@ -134,7 +141,7 @@ class H264Encoder(
             inputSurface = codec.createInputSurface()
             codec.start()
         } catch (e: Exception) {
-            Log.e(TAG, "初始化失败: ${e.message}")
+            QpmLog.e(TAG, "初始化失败: ${e.message}")
             runCatching { codec.release() }
             throw e
         }

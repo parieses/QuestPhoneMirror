@@ -20,7 +20,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
-import android.util.Log
 import android.view.Display
 import android.view.OrientationEventListener
 import androidx.core.app.NotificationCompat
@@ -99,7 +98,7 @@ class CastService : Service() {
 
         /** 向 UI 广播状态/错误文本。调用方可能是编解码/网络线程，UI 侧需自行切主线程。 */
         fun postStatus(s: String) {
-            Log.i(TAG, "status: $s")
+            QpmLog.i(TAG, "status: $s")
             statusListeners.forEach { runCatching { it(s) } }
         }
 
@@ -175,7 +174,7 @@ class CastService : Service() {
                     instanceRef?.connectedReceiverHosts()?.forEach { allowedHosts.add(it) }
                 }
                 allowedHosts.remove(host)
-                Log.i(TAG, "已禁止接收端 $host，白名单：$allowedHosts")
+                QpmLog.i(TAG, "已禁止接收端 $host，白名单：$allowedHosts")
                 instanceRef?.kickReceiver(host)
             }
             notifyReceiversChanged()
@@ -232,6 +231,15 @@ class CastService : Service() {
 
     /** 上次重建失败的目标尺寸（w*10000+h）：同一尺寸不再反复尝试，避免每次显示事件都闪一下。 */
     private var lastFailedSize: Int = 0
+
+    /**
+     * 编码器代际：每次 newEncoder 自增。旋转重建会停掉旧编码器，但其异步回调
+     * （onError/onFrame）可能晚于新编码器建成才触发——旧实现里一个迟到的 onError
+     * 会 post stopAll() 把刚建好的新流水线拆掉，表现为「一转屏投屏就断」。
+     * 代际不匹配的回调一律丢弃（onError 仅记日志）。
+     */
+    @Volatile
+    private var encoderGen: Int = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -295,7 +303,7 @@ class CastService : Service() {
         }
         projection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
-                Log.w(TAG, "MediaProjection onStop：授权被系统撤销")
+                QpmLog.w(TAG, "MediaProjection onStop：授权被系统撤销")
                 postStatus("录屏授权被系统撤销，投屏已停止")
                 stopAll()
             }
@@ -304,7 +312,7 @@ class CastService : Service() {
         val enc = try {
             newEncoder(videoW, videoH)
         } catch (e: Exception) {
-            Log.e(TAG, "编码器初始化失败: ${e.message}")
+            QpmLog.e(TAG, "编码器初始化失败: ${e.message}")
             postStatus("编码器初始化失败：${e.message ?: "本机不支持 H.264 硬编"}，投屏已停止")
             stopAll()
             return
@@ -337,20 +345,30 @@ class CastService : Service() {
     }
 
     /** 按当前尺寸建编码器：onFrame 把帧塞进全部客户端的发送队列。 */
-    private fun newEncoder(w: Int, h: Int): H264Encoder =
-        H264Encoder(w, h, currentBitrate,         onFrame = { buf, size, flags, pts ->
-            val frame = Proto.videoFrame(pts, flags, buf, 0, size)
-            statFrames.incrementAndGet()
-            statBytes.addAndGet(size.toLong())
-            var accepted = false
-            clients.forEach { if (it.offer(frame)) accepted = true }
-            if (!accepted) statDropped.incrementAndGet()
+    private fun newEncoder(w: Int, h: Int): H264Encoder {
+        // 每个编码器实例一个代际，重建/停止后迟到的回调按代际丢弃（见 encoderGen 注释）
+        val gen = encoderGen.incrementAndGet()
+        return H264Encoder(w, h, currentBitrate, onFrame = { buf, size, flags, pts ->
+            if (gen == encoderGen) {
+                val frame = Proto.videoFrame(pts, flags, buf, 0, size)
+                statFrames.incrementAndGet()
+                statBytes.addAndGet(size.toLong())
+                var accepted = false
+                clients.forEach { if (it.offer(frame)) accepted = true }
+                if (!accepted) statDropped.incrementAndGet()
+            }
         }, onError = { msg ->
-            Log.e(TAG, "编码器错误: $msg")
-            postStatus("编码器错误：$msg，投屏已停止")
-            // 不能在本线程直接调 codec.stop()（MediaCodec 回调内调用会崩溃），切主线程执行
-            mainHandler.post { stopAll() }
+            if (gen == encoderGen) {
+                QpmLog.e(TAG, "编码器错误: $msg")
+                postStatus("编码器错误：$msg，投屏已停止")
+                // 不能在本线程直接调 codec.stop()（MediaCodec 回调内调用会崩溃），切主线程执行
+                mainHandler.post { stopAll() }
+            } else {
+                // 旧编码器（已被重建停掉）的迟到错误：只记日志，绝不能 stopAll 掉新流水线
+                QpmLog.w(TAG, "旧编码器（代际 $gen）错误忽略：$msg")
+            }
         })
+    }
 
     /**
      * 屏幕方向监听：横竖屏切换后 VirtualDisplay/编码器尺寸与真实屏幕不符
@@ -379,7 +397,7 @@ class CastService : Service() {
             }
         }
         runCatching { dm.registerDisplayListener(dl, mainHandler) }
-            .onFailure { Log.w(TAG, "注册显示监听失败：${it.message}") }
+            .onFailure { QpmLog.w(TAG, "注册显示监听失败：${it.message}") }
         displayListener = dl
 
         orientationListener = object : OrientationEventListener(this) {
@@ -433,7 +451,7 @@ class CastService : Service() {
         val oldH = videoH
         val oldDpi = videoDpi
         try {
-            Log.i(TAG, "屏幕尺寸变化：${oldW}x$oldH -> ${w}x$h，按新尺寸重建虚拟显示与编码器")
+            QpmLog.i(TAG, "屏幕尺寸变化：${oldW}x$oldH -> ${w}x$h，按新尺寸重建虚拟显示与编码器")
             postStatus("屏幕方向变化，正在按 ${w}x$h 调整画面…")
             if (rebuildPipeline(w, h, m.densityDpi)) {
                 lastFailedSize = 0
@@ -446,7 +464,7 @@ class CastService : Service() {
                 return
             }
             // 新尺寸建不出来：按旧尺寸恢复，宁可比例不对也别断流
-            Log.w(TAG, "按 ${w}x$h 重建失败，尝试恢复 ${oldW}x$oldH")
+            QpmLog.w(TAG, "按 ${w}x$h 重建失败，尝试恢复 ${oldW}x$oldH")
             lastFailedSize = sizeKey
             if (oldW > 0 && oldH > 0 && rebuildPipeline(oldW, oldH, oldDpi)) {
                 postStatus("按 ${w}x$h 重建失败（该尺寸可能不受本机编码器支持），已恢复 ${oldW}x$oldH 继续投屏")
@@ -461,14 +479,17 @@ class CastService : Service() {
 
     /** 拆掉当前显示与编码器，按给定尺寸重建。全部成功才返回 true 并更新 videoW/H。 */
     private fun rebuildPipeline(w: Int, h: Int, dpi: Int): Boolean {
-        runCatching { display?.release() }
-        display = null
+        // 先停编码器、再释放显示：编码器运行中释放其输入 VirtualDisplay 会 abandon
+        // 输入 surface，MediaCodec 随即抛 onError——旧顺序「先 release 显示」正是
+        // 转屏断流的触发器（迟到的 onError 会 post stopAll 拆掉新流水线）
         runCatching { encoder?.stop() }
         encoder = null
+        runCatching { display?.release() }
+        display = null
         val enc = try {
             newEncoder(w, h)
         } catch (e: Exception) {
-            Log.e(TAG, "创建 ${w}x$h 编码器失败: ${e.message}")
+            QpmLog.e(TAG, "创建 ${w}x$h 编码器失败: ${e.message}")
             return false
         }
         val vd = runCatching {
@@ -482,9 +503,9 @@ class CastService : Service() {
                 null,
                 null
             )
-        }.onFailure { Log.e(TAG, "创建 ${w}x$h 虚拟显示异常: ${it.message}") }.getOrNull()
+        }.onFailure { QpmLog.e(TAG, "创建 ${w}x$h 虚拟显示异常: ${it.message}") }.getOrNull()
         if (vd == null) {
-            Log.e(TAG, "创建 ${w}x$h 虚拟显示失败（返回 null）")
+            QpmLog.e(TAG, "创建 ${w}x$h 虚拟显示失败（返回 null）")
             runCatching { enc.stop() }
             return false
         }
@@ -527,7 +548,7 @@ class CastService : Service() {
                     )
                     clients.forEach { if (it.paired) it.sendReliable(stats) }
                 } catch (e: Exception) {
-                    Log.w(TAG, "统计广播异常: ${e.message}")
+                    QpmLog.w(TAG, "统计广播异常: ${e.message}")
                 }
             }
         }.apply { start() }
@@ -545,7 +566,7 @@ class CastService : Service() {
             val others = peers.filter { !isLocalAddress(it.host) }
             if (others.isNotEmpty()) {
                 if (lastPeerSeen.get() == 0L) {
-                    Log.i(TAG, "检测到 ${others.size} 个其他发送端在网，免密直连已关闭")
+                    QpmLog.i(TAG, "检测到 ${others.size} 个其他发送端在网，免密直连已关闭")
                     postStatus("检测到局域网内有其他 QPM 发送端，接收端需输入配对码")
                 }
                 lastPeerSeen.set(System.currentTimeMillis())
@@ -580,10 +601,10 @@ class CastService : Service() {
                     notifyReceiversChanged()
                 }, onClose = { notifyReceiversChanged() })
                 clients.add(client)
-                Log.i(TAG, "新客户端接入 ${socket.inetAddress?.hostAddress}，等待配对")
+                QpmLog.i(TAG, "新客户端接入 ${socket.inetAddress?.hostAddress}，等待配对")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "acceptLoop 退出: ${e.message}")
+            QpmLog.e(TAG, "acceptLoop 退出: ${e.message}")
             postStatus("服务异常：${e.message ?: "TCP 监听失败（端口可能被占用）"}，请停止后重试")
         }
     }
@@ -599,7 +620,7 @@ class CastService : Service() {
         runCatching {
             prevScreenOffTimeout = Settings.System.getInt(cr, Settings.System.SCREEN_OFF_TIMEOUT)
             Settings.System.putInt(cr, Settings.System.SCREEN_OFF_TIMEOUT, Int.MAX_VALUE)
-            Log.i(TAG, "已临时禁用自动息屏（原值 ${prevScreenOffTimeout}s）")
+            QpmLog.i(TAG, "已临时禁用自动息屏（原值 ${prevScreenOffTimeout}s）")
         }.onFailure {
             postStatus("防息屏设置失败：${it.message}")
         }
@@ -610,13 +631,15 @@ class CastService : Service() {
         prevScreenOffTimeout = null
         runCatching {
             Settings.System.putInt(contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, t)
-            Log.i(TAG, "已恢复自动息屏时间：${t}s")
+            QpmLog.i(TAG, "已恢复自动息屏时间：${t}s")
         }
     }
 
     private fun stopAll() {
         running = false
         reconfiguring = false
+        // 作废编码器代际：停止过程中旧编码器迟到的 onError/onFrame 不再触发任何动作
+        encoderGen.incrementAndGet()
         currentPairCode = null
         lastPeerSeen.set(0L)
         stopRotationWatch()
@@ -630,12 +653,13 @@ class CastService : Service() {
         peerWatchThread = null
         runCatching { server?.close() }
         server = null
+        // 先停编码器再释放显示（同 rebuildPipeline：避免 abandon 输入 surface 触发 onError）
+        encoder?.stop()
+        encoder = null
         runCatching { display?.release() }
         display = null
         runCatching { projection?.stop() }
         projection = null
-        encoder?.stop()
-        encoder = null
         restoreScreenOffTimeout()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -668,7 +692,7 @@ class CastService : Service() {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipSyncSuppress = true
             runCatching { cm.setPrimaryClip(ClipData.newPlainText("QPM", text)) }
-                .onFailure { Log.w(TAG, "写手机剪贴板失败: ${it.message}") }
+                .onFailure { QpmLog.w(TAG, "写手机剪贴板失败: ${it.message}") }
             postStatus(getString(R.string.cast_clip_copied))
         }
     }
@@ -728,7 +752,7 @@ class CastService : Service() {
             try {
                 synchronized(writeLock) { socket.getOutputStream().write(channel.seal(bytes)) }
             } catch (e: Exception) {
-                Log.w(TAG, "sendReliable 失败: ${e.message}")
+                QpmLog.w(TAG, "sendReliable 失败: ${e.message}")
                 close()
             }
         }
@@ -760,7 +784,7 @@ class CastService : Service() {
                 while (true) {
                     val f = runCatching { reader.read() }.getOrNull()
                     if (f == null) {
-                        Log.w(TAG, "握手阶段未收到 KEY_EXCHANGE（超时或断流），回退明文通道")
+                        QpmLog.w(TAG, "握手阶段未收到 KEY_EXCHANGE（超时或断流），回退明文通道")
                         break
                     }
                     if (f.type == Type.KEY_EXCHANGE) {
@@ -772,22 +796,22 @@ class CastService : Service() {
                                 socket.getOutputStream().write(Proto.keyExchange(kp.publicEncoded))
                             }
                             channel.arm(session)
-                            Log.i(TAG, "加密通道已建立（AES-256-GCM）")
+                            QpmLog.i(TAG, "加密通道已建立（AES-256-GCM）")
                         } else {
                             // 密钥交换失败：降级明文，不回发 KE，让对端超时后回落（不会互等死锁）
-                            Log.w(TAG, "密钥派生失败，回退明文通道")
+                            QpmLog.w(TAG, "密钥派生失败，回退明文通道")
                         }
                         break
                     }
                     if (f.type == Type.HELLO) {
                         receiverName = Decoders.textOf(f)
                         receiverBeacons[hostAddress ?: ""] = receiverName
-                        Log.i(TAG, "接收端 $hostAddress 宣告设备名：$receiverName")
+                        QpmLog.i(TAG, "接收端 $hostAddress 宣告设备名：$receiverName")
                         notifyReceiversChanged()
                         continue
                     }
                     // 协议外的握手帧（旧版对端 HELLO 后直接发业务帧）：暂存并回落明文
-                    Log.w(TAG, "握手阶段收到非预期帧 type=${f.type}，回退明文通道")
+                    QpmLog.w(TAG, "握手阶段收到非预期帧 type=${f.type}，回退明文通道")
                     pending = f
                     break
                 }
@@ -801,7 +825,7 @@ class CastService : Service() {
                         Type.HELLO -> {
                             receiverName = Decoders.textOf(frame)
                             receiverBeacons[hostAddress ?: ""] = receiverName
-                            Log.i(TAG, "接收端 $hostAddress 宣告设备名：$receiverName")
+                            QpmLog.i(TAG, "接收端 $hostAddress 宣告设备名：$receiverName")
                             notifyReceiversChanged()
                         }
 
@@ -838,7 +862,7 @@ class CastService : Service() {
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "readLoop 连接异常: ${e.message}")
+                QpmLog.w(TAG, "readLoop 连接异常: ${e.message}")
                 // 连接异常，走 finally
             } finally {
                 close()
@@ -849,7 +873,7 @@ class CastService : Service() {
             val host = socket.inetAddress?.hostAddress
             // 白名单门控：被禁止的设备直接拒绝并断开，不进入配对流程
             if (host != null && !isReceiverAllowed(host)) {
-                Log.w(TAG, "接收端 $host 不在白名单，已拒绝连接")
+                QpmLog.w(TAG, "接收端 $host 不在白名单，已拒绝连接")
                 sendReliable(Proto.reject("发送端未允许本机连接（请在手机端「连接管理」中勾选）"))
                 mainHandler.post { close() }
                 return
@@ -860,10 +884,10 @@ class CastService : Service() {
                     paired = true
                     sendReliable(Proto.pairResult(true))
                     onPaired(this)
-                    Log.i(TAG, "免密直连已接受（网络内唯一发送端）")
+                    QpmLog.i(TAG, "免密直连已接受（网络内唯一发送端）")
                 } else {
                     sendReliable(Proto.pairResult(false))
-                    Log.w(TAG, "免密直连被拒绝：网络内存在多个发送端")
+                    QpmLog.w(TAG, "免密直连被拒绝：网络内存在多个发送端")
                 }
                 return
             }
@@ -874,9 +898,9 @@ class CastService : Service() {
             } else {
                 pairFails++
                 sendReliable(Proto.pairResult(false))
-                Log.w(TAG, "配对失败（第 $pairFails 次）来自 ${socket.inetAddress?.hostAddress}")
+                QpmLog.w(TAG, "配对失败（第 $pairFails 次）来自 ${socket.inetAddress?.hostAddress}")
                 if (pairFails >= MAX_PAIR_FAILS) {
-                    Log.w(TAG, "连续配对失败 $pairFails 次，断开连接")
+                    QpmLog.w(TAG, "连续配对失败 $pairFails 次，断开连接")
                     close()
                 }
             }
@@ -918,9 +942,9 @@ class CastService : Service() {
                         if (eof) break
                     }
                 }
-                Log.i(TAG, "文件发送完成: $path ($total bytes)")
+                QpmLog.i(TAG, "文件发送完成: $path ($total bytes)")
             } catch (e: Exception) {
-                Log.e(TAG, "文件发送失败: $path - ${e.message}")
+                QpmLog.e(TAG, "文件发送失败: $path - ${e.message}")
                 runCatching { sendReliable(Proto.fileError("读取失败：${e.message}")) }
             }
         }
@@ -939,11 +963,11 @@ class CastService : Service() {
             try {
                 pushTarget = target
                 pushOs = java.io.FileOutputStream(target)
-                Log.i(TAG, "接收端推送文件到：${target.absolutePath}（共 $total 字节）")
+                QpmLog.i(TAG, "接收端推送文件到：${target.absolutePath}（共 $total 字节）")
             } catch (e: Exception) {
                 pushOs = null
                 pushTarget = null
-                Log.e(TAG, "创建推送文件失败: $path - ${e.message}")
+                QpmLog.e(TAG, "创建推送文件失败: $path - ${e.message}")
                 sendReliable(Proto.filePushRes(false, "无法创建文件：${e.message}"))
             }
         }
@@ -957,14 +981,14 @@ class CastService : Service() {
                     pushOs = null
                     val path = pushTarget?.absolutePath ?: ""
                     pushTarget = null
-                    Log.i(TAG, "接收端推送文件接收完成：$path")
+                    QpmLog.i(TAG, "接收端推送文件接收完成：$path")
                     sendReliable(Proto.filePushRes(true, path))
                 }
             } catch (e: Exception) {
                 runCatching { os.close() }
                 pushOs = null
                 pushTarget = null
-                Log.e(TAG, "写入推送文件失败: ${e.message}")
+                QpmLog.e(TAG, "写入推送文件失败: ${e.message}")
                 sendReliable(Proto.filePushRes(false, "写入失败：${e.message}"))
             }
         }
@@ -976,12 +1000,12 @@ class CastService : Service() {
                 val now = System.currentTimeMillis()
                 if (now - lastA11yNullLog > 5000) {
                     lastA11yNullLog = now
-                    Log.w(TAG, "无障碍服务未连接，控制指令被丢弃（手机端未开启「QPM 控制服务」）")
+                    QpmLog.w(TAG, "无障碍服务未连接，控制指令被丢弃（手机端未开启「QPM 控制服务」）")
                 }
                 return
             }
             runCatching { action(control) }.onFailure {
-                Log.e(TAG, "控制指令执行失败: ${it.message}")
+                QpmLog.e(TAG, "控制指令执行失败: ${it.message}")
             }
         }
 

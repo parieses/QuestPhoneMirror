@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Bundle
-import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -31,7 +30,7 @@ class QpmControlService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        Log.i(TAG, "onServiceConnected: 服务已连接，反向控制可用")
+        QpmLog.i(TAG, "onServiceConnected: 服务已连接，反向控制可用")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
@@ -40,7 +39,7 @@ class QpmControlService : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
-        Log.w(TAG, "onDestroy: 服务被回收，反向控制失效，直到系统重新拉起")
+        QpmLog.w(TAG, "onDestroy: 服务被回收，反向控制失效，直到系统重新拉起")
         super.onDestroy()
     }
 
@@ -65,11 +64,11 @@ class QpmControlService : AccessibilityService() {
     /** 向当前焦点输入框写文字。 */
     fun sendText(text: String) {
         val root = rootInActiveWindow ?: run {
-            Log.w(TAG, "sendText: rootInActiveWindow 为 null（无活动窗口），丢弃")
+            QpmLog.w(TAG, "sendText: rootInActiveWindow 为 null（无活动窗口），丢弃")
             return
         }
         val focus = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: run {
-            Log.w(TAG, "sendText: 当前没有聚焦的输入框，丢弃")
+            QpmLog.w(TAG, "sendText: 当前没有聚焦的输入框，丢弃")
             return
         }
         val args = Bundle().apply {
@@ -83,7 +82,7 @@ class QpmControlService : AccessibilityService() {
             4 -> performGlobalAction(GLOBAL_ACTION_BACK)
             3 -> performGlobalAction(GLOBAL_ACTION_HOME)
             187 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
-            else -> Log.w(TAG, "key: 不支持的 keycode=$keycode")
+            else -> QpmLog.w(TAG, "key: 不支持的 keycode=$keycode")
         }
     }
 }
