@@ -33,10 +33,19 @@
             android:name=".SenderActivity"
             android:exported="false" />
 
+        <!--
+          方向策略（平台中性化后调整）：
+          - fullSensor 跟随传感器：手机作接收端竖持时竖屏（竖构图视频全屏，无黑边），
+            Quest 2D 面板被系统锁横所以仍是横屏，电脑端无方向概念，三方都不受影响。
+            原写死 landscape 是 Quest 专属期遗留，手机接收端会被强行横过来。
+          - configChanges 收下旋转：不重建 Activity，避免 MirrorClient/解码器被
+            surfaceDestroyed 打断导致投屏中断；界面不重排，视频保持等比居中。
+        -->
         <activity
             android:name=".ReceiverActivity"
             android:exported="false"
-            android:screenOrientation="landscape" />
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:screenOrientation="fullSensor" />
 
         <activity
             android:name=".FileBrowserActivity"
