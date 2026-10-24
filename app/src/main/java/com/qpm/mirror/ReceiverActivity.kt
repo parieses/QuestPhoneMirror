@@ -164,20 +164,25 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         destroyed = false
         uiHandler.removeCallbacks(pairTimeoutRunnable)
         val dec = try {
+            // 用最近一次已知的真实尺寸配置：写死 1920x1080 去解 3200x1440 这类码流，
+            // 部分机型硬解会在 native 层崩溃（Java 层抓不到 → 表现为「连上就闪退」）
             H264Decoder(
-                holder.surface,
-                { w, h -> runUi { fitSurface(w, h) } }
-            ) { msg ->
-                QpmLog.e(TAG, "解码器错误: $msg")
-                runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
-            }
+                surface = holder.surface,
+                onVideoSize = { w, h -> runUi { fitSurface(w, h) } },
+                onError = { msg ->
+                    QpmLog.e(TAG, "解码器错误: $msg")
+                    runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
+                },
+                videoW = lastVideoW,
+                videoH = lastVideoH
+            )
         } catch (e: Exception) {
             QpmLog.e(TAG, "解码器初始化失败: ${e.message}", e)
             tvStage.text = getString(R.string.receiver_decoder_fail)
             tvStageHint.text = e.message ?: getString(R.string.receiver_h264_unsupported)
             return
         }
-        QpmLog.i(TAG, "解码器初始化成功，开始连接")
+        QpmLog.i(TAG, "解码器初始化成功（${lastVideoW}x${lastVideoH}），开始连接")
         decoder = dec
 
         mapper = TouchMapper(
@@ -202,7 +207,13 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         cryptoFailedThisConnection = false
         client = MirrorClient(
             decoder = dec,
-            onScreenInfo = { w, h, _ -> runUi { fitSurface(w, h); hint.text = "" } },
+            onScreenInfo = { w, h, _ ->
+                runUi {
+                    fitSurface(w, h)
+                    hint.text = ""
+                    ensureDecoderSize(w, h)
+                }
+            },
             onStatus = { s -> runUi { onStatus(s) } },
             onDisconnected = { runUi { onDisconnected() } },
             onPairResult = { ok -> runUi { onPairResult(ok) } },
@@ -610,6 +621,46 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         statsView.text = getString(R.string.receiver_stats_line, w, h, fps, bps, dropped, decodedFps)
     }
 
+    /**
+     * 发送端分辨率变化（首次连上时 SCREEN_INFO 到达、或手机旋转）时按真实尺寸重建解码器。
+     *
+     * 硬解在 configure 时拿到的尺寸与实际码流差别较大时，部分机型会在 native 层崩溃
+     * （Java 层拦不住，表现为「连接成功就闪退回首页」「手机一转屏接收端就没了」）。
+     * 发送端每次配对/转向都会先发 SCREEN_INFO 再发新码流，所以这里能赶在首帧前重建。
+     */
+    private fun ensureDecoderSize(w: Int, h: Int) {
+        if (w <= 0 || h <= 0) return
+        lastVideoW = w
+        lastVideoH = h
+        val cur = decoder
+        if (cur != null && cur.videoW == w && cur.videoH == h) return
+        val surface = surfaceView.holder.surface
+        if (surface == null || !surface.isValid) {
+            QpmLog.w(TAG, "按 ${w}x$h 重建解码器跳过：Surface 无效")
+            return
+        }
+        val dec = try {
+            H264Decoder(
+                surface = surface,
+                onVideoSize = { vw, vh -> runUi { fitSurface(vw, vh) } },
+                onError = { msg ->
+                    QpmLog.e(TAG, "解码器错误: $msg")
+                    runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
+                },
+                videoW = w,
+                videoH = h
+            )
+        } catch (e: Exception) {
+            QpmLog.e(TAG, "按 ${w}x$h 重建解码器失败: ${e.message}", e)
+            return
+        }
+        // 先换引用再停旧实例：网络线程只会喂给当前实例，在途帧由 feed() 的 alive 守卫兜住
+        decoder = dec
+        client?.decoder = dec
+        runCatching { cur?.stop() }
+        QpmLog.i(TAG, "解码器已按 ${w}x$h 重建（旧 ${cur?.videoW}x${cur?.videoH}）")
+    }
+
     /** 让 SurfaceView 保持手机屏幕宽高比，居中显示。 */
     private fun fitSurface(videoW: Int, videoH: Int) {
         if (videoW <= 0 || videoH <= 0) return
@@ -641,5 +692,15 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private companion object {
         private const val TAG = "ReceiverActivity"
         private const val REQ_PUSH = 1001
+
+        /**
+         * 最近一次已知的发送端画面尺寸：进程内记住，重建解码器/返回界面时直接复用，
+         * 避免又用默认 1920x1080 去解一个分辨率完全不同的码流。
+         */
+        @Volatile
+        private var lastVideoW = 1920
+
+        @Volatile
+        private var lastVideoH = 1080
     }
 }

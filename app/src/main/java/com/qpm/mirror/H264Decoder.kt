@@ -14,7 +14,14 @@ import java.util.concurrent.atomic.AtomicLong
 class H264Decoder(
     private val surface: Surface,
     private val onVideoSize: (Int, Int) -> Unit,
-    private val onError: (String) -> Unit = {}
+    private val onError: (String) -> Unit = {},
+    /**
+     * configure 用的尺寸，应与发送端实际码流一致（接收端从 SCREEN_INFO 拿到）。
+     * 用写死的默认尺寸去解一个分辨率明显不同的码流时，部分机型的硬解会在
+     * native 层直接崩溃（Java 层捕获不到，表现为「连上就闪退/一转屏就断」）。
+     */
+    val videoW: Int = 1920,
+    val videoH: Int = 1080
 ) {
     private val codec: MediaCodec =
         MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
@@ -86,13 +93,13 @@ class H264Decoder(
         try {
             codec.setCallback(callback)
             codec.configure(
-                MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1920, 1080),
+                MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, videoW, videoH),
                 surface,
                 null,
                 0
             )
             codec.start()
-            QpmLog.i(TAG, "解码器已启动（等待 SPS/PPS 与首个关键帧）")
+            QpmLog.i(TAG, "解码器已启动 ${videoW}x${videoH}（等待 SPS/PPS 与首个关键帧）")
         } catch (e: Exception) {
             QpmLog.e(TAG, "初始化失败: ${e.message}")
             alive = false

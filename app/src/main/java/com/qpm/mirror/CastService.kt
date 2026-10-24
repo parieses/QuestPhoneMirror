@@ -481,8 +481,7 @@ class CastService : Service() {
             if (rebuildPipeline(w, h, m.densityDpi)) {
                 lastFailedSize = 0
                 postStatus(if (w > h) "已切换为横屏 ${w}x$h" else "已切换为竖屏 ${w}x$h")
-                // 接收端靠 SCREEN_INFO 重排 SurfaceView 宽高比与触摸映射，必须重发
-                clients.forEach { it.sendReliable(Proto.screenInfo(w, h, m.densityDpi)) }
+                // SCREEN_INFO 已由 rebuildPipeline 在放行新码流之前播报（顺序敏感，勿在此重发）
                 // beacon 里带着屏幕尺寸，换块线程重新广播
                 broadcastThread?.interrupt()
                 broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, w, h) }.apply { start() }
@@ -556,7 +555,12 @@ class CastService : Service() {
             return false
         }
 
-        // ③ 新流水线已接管，停旧编码器（迟到的回调由代际守卫丢弃）
+        // ③ 先播报新尺寸、再放行新码流：接收端收到 SCREEN_INFO 会按新尺寸重建解码器，
+        //    若让新尺寸的帧抢先到达，旧尺寸解码器会吃到尺寸不符的码流（部分机型硬解直接崩）。
+        //    activeGen 在这之后才更新，保证「SCREEN_INFO 一定先于新尺寸帧」写入 socket。
+        clients.forEach { it.sendReliable(Proto.screenInfo(w, h, dpi)) }
+
+        // ④ 新流水线已接管，停旧编码器（迟到的回调由代际守卫丢弃）
         runCatching { old.stop() }
         encoder = enc
         activeGen = gen
@@ -825,7 +829,8 @@ class CastService : Service() {
             try {
                 synchronized(writeLock) { socket.getOutputStream().write(channel.seal(bytes)) }
             } catch (e: Exception) {
-                QpmLog.w(TAG, "sendReliable 失败: ${e.message}")
+                // 带异常类型：对端进程消失时不同 ROM 抛的异常消息可能为 null，只有类型可辨
+                QpmLog.w(TAG, "sendReliable 失败: ${e.javaClass.simpleName}: ${e.message}")
                 close()
             }
         }
@@ -838,7 +843,9 @@ class CastService : Service() {
                     val frame = queue.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
                     synchronized(writeLock) { out.write(channel.seal(frame)) }
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // 之前这里静默 close：对端崩溃导致的断流在日志里完全看不出原因
+                if (!closed) QpmLog.w(TAG, "发送线程异常退出: ${e.javaClass.simpleName}: ${e.message}")
                 close()
             }
         }

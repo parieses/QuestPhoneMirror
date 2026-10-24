@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.16-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.17-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -170,7 +170,16 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 ## 📝 更新日志
 
-### v0.16（本轮）
+### v0.17（本轮）
+
+**修复**
+- **接收端解码器按发送端真实分辨率配置**：此前 configure 用写死的 1920×1080，而手机实际画面是 1440×3200 / 3200×1440 这类尺寸——硬解在尺寸明显不符时，部分机型会在 native 层直接崩溃（Java 层拦不住，表现为「带配对成功却闪退回首页」「手机一转屏接收端就没了」）。现在收到 `SCREEN_INFO` 就按真实尺寸创建解码器，尺寸变化时**热替换**新解码器（`MirrorClient.decoder` 改为可替换，旧实例立即停掉），进程内还会记住上次尺寸，重建/重进界面都不再退回默认值
+- **旋转时先播报尺寸、再放行新码流**：`SCREEN_INFO` 在新尺寸帧之前写入连接（`activeGen` 之后才更新），确保接收端已经换好对应尺寸的解码器，不会被新分辨率帧打个措手不及
+- **发送线程异常不再静默**：对端进程消失导致的发送失败原先被 `catch (_: Exception)` 吞掉，日志里只剩「连接异常: Socket closed」看不出起因；现在记录异常类型与消息
+
+* * *
+
+### v0.16
 
 **修复**
 - **手机横屏必断投屏（真正根因）**：MediaProjection 的令牌一生只能 `createVirtualDisplay` 一次——Android 14 起第二次调用直接抛「Don't take multiple captures…」并**连带撤销整个录屏授权**（紧跟其后的 `Cannot create VirtualDisplay with non-current MediaProjection` 就是授权已被系统作废）。旧实现旋转时「release 旧虚拟显示 → 再建新的」，第二次创建必然失败、按旧尺寸回退再失败，只能 `stopAll` 断流。现改为**复用同一个虚拟显示**：新建编码器（编码器输入面尺寸在 configure 时固定，无法原地改）→ `setSurface` 把新输入面挂上去 → `resize` 改采集分辨率，三步全部成功才停旧编码器；任一步失败则把旧 surface 挂回去，旧流水线继续出画面
@@ -353,8 +362,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.16        # 版本号唯一来源就是 git tag
-git push origin v0.16
+git tag v0.17        # 版本号唯一来源就是 git tag
+git push origin v0.17
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**

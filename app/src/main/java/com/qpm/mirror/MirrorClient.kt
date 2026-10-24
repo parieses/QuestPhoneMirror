@@ -17,7 +17,7 @@ import java.net.Socket
  * 发现多个 -> 回调 onMultipleSenders 由 UI 让用户选择；0 个 -> 继续扫描。
  */
 class MirrorClient(
-    private val decoder: H264Decoder?,
+    decoder: H264Decoder?,
     private val onScreenInfo: (Int, Int, Int) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onDisconnected: () -> Unit,
@@ -44,6 +44,14 @@ class MirrorClient(
     @Volatile private var stopped = false
     @Volatile private var host: String? = null
     @Volatile private var port: Int = CastService.TCP_PORT
+
+    /**
+     * 解码器可热替换：发送端分辨率一旦变化，接收端会按新尺寸重建解码器，
+     * 网络线程直接喂给新实例（旧实例立即停掉）。用写死的尺寸配置解码器，
+     * 部分机型的硬解在收到尺寸不符的码流时会在 native 层崩溃。
+     */
+    @Volatile
+    var decoder: H264Decoder? = decoder
 
     @Volatile private var phoneScreenW = 0
     @Volatile private var phoneScreenH = 0
