@@ -256,7 +256,7 @@
 <header>
   <div class="wrap hero">
     <div>
-      <span class="tag"><span class="dot"></span>v0.18 已发布 · 开源 · 免 root</span>
+      <span class="tag"><span class="dot"></span>v0.19 已发布 · 开源 · 免 root</span>
       <h1>把手机投到 <span class="grad">任意设备</span><br>还能反过来操作它</h1>
       <p class="sub">一个 APK 双角色：装在手机上是发送端，Quest 头显、另一台手机平板、或任何实现了本协议的电脑端作为接收端。画面实时镜像，接收端上的点击、滑动、输入会真实作用到手机上。免 PC、免公网、免账号，两端同一 Wi-Fi 即用。</p>
       <div class="cta">
@@ -512,6 +512,10 @@
       <p>等约 1 秒让关键帧到达即可恢复；仍有问题就退出接收端重进（接入时会强制请求关键帧）。</p>
     </details>
     <details>
+      <summary>微信 / QQ 投屏像蒙了层毛玻璃？</summary>
+      <p>这是系统的「屏幕共享防护」在起作用：小米 / 澎湃OS 在 <b>设置 → 电诈防护 → 屏幕共享防护</b>（部分机型在开发者选项「停用屏幕防护共享」）检测到「屏幕共享 + 具备控制能力的无障碍服务」时，会对微信、QQ、相册、支付宝等敏感应用做模糊遮罩——与投屏画质无关，任何同类工具都无法绕过。三种处理：① 关闭该系统开关；② 投屏时点屏幕左上角提示、选择「继续共享」（单次放行）；③ 只在需要反向控制时才开「QPM 控制服务」。</p>
+    </details>
+    <details>
       <summary>Netflix 等 App 投过去是黑的？</summary>
       <p>DRM 硬件保护内容禁止被捕获，这是 Android 的硬性限制，任何同类工具都无法绕过。</p>
     </details>
@@ -555,7 +559,7 @@
       <div class="cta" style="justify-content: center;">
         <a class="btn btn-primary" href="https://github.com/parieses/QuestPhoneMirror/releases/latest" target="_blank" rel="noopener">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16"/></svg>
-          下载 v0.18
+          下载 v0.19
         </a>
         <a class="btn btn-ghost" href="https://github.com/parieses/QuestPhoneMirror#接入自定义接收端" target="_blank" rel="noopener">协议对接文档</a>
       </div>

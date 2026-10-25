@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.18-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.19-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -170,7 +170,14 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 ## 📝 更新日志
 
-### v0.18（本轮）
+### v0.19
+
+**改进**
+- **「屏幕共享防护」说明同步官网**：微信 / QQ 投屏发虚、像蒙了层毛玻璃的系统级成因（小米/澎湃OS「电诈防护 → 屏幕共享防护」的模糊遮罩）与三种处理方式，此前只写在 README 和 App 内提示里，现官网 FAQ 也可直接查到；README v0.18 条目去掉开发期「本轮」标注，更新日志正式化
+
+* * *
+
+### v0.18
 
 **改进**
 - **「屏幕共享防护」提示**：无障碍开启后，发送端界面会多一条说明——微信 / QQ 投屏发虚、像蒙了层毛玻璃，是系统（小米/澎湃OS 的「电诈防护 → 屏幕共享防护」）检测到「屏幕共享 + 具备控制能力的无障碍服务」后对敏感应用做的**模糊遮罩**，与投屏画质无关。README 常见问题同步给出三种处理方式（关闭系统开关 / 投屏时点左上角「继续共享」/ 只在需要控制时开无障碍）
@@ -369,8 +376,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.18        # 版本号唯一来源就是 git tag
-git push origin v0.18
+git tag v0.19        # 版本号唯一来源就是 git tag
+git push origin v0.19
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
