@@ -32,6 +32,7 @@ class SenderActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var tvPairCode: TextView
     private lateinit var tvWarn: TextView
+    private lateinit var tvA11yHint: TextView
     private lateinit var pairCard: LinearLayout
     private lateinit var btnStart: Button
     private lateinit var rgQuality: RadioGroup
@@ -95,6 +96,7 @@ class SenderActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
         tvPairCode = findViewById(R.id.tvPairCode)
         tvWarn = findViewById(R.id.tvWarn)
+        tvA11yHint = findViewById(R.id.tvA11yHint)
         pairCard = findViewById(R.id.pairCard)
         btnStart = findViewById(R.id.btnStart)
         rgQuality = findViewById(R.id.rgQuality)
@@ -323,7 +325,11 @@ class SenderActivity : AppCompatActivity() {
         val connected = QpmControlService.instance != null
         val enabledBySetting = isAccessibilityEnabled(this)
         // 警告只在未开启时出现，不覆写 tvStatus（状态条只承载投屏状态事件）
-        tvWarn.visibility = if (connected || enabledBySetting) View.GONE else View.VISIBLE
+        val a11yOn = connected || enabledBySetting
+        tvWarn.visibility = if (a11yOn) View.GONE else View.VISIBLE
+        // 已开启时给一条提示：部分 ROM（小米/澎湃OS）的「屏幕共享防护」会把微信/QQ 等画面糊成毛玻璃，
+        // 用户常误以为是投屏画质问题
+        tvA11yHint.visibility = if (a11yOn) View.VISIBLE else View.GONE
     }
 
     private fun isAccessibilityEnabled(ctx: Context): Boolean {

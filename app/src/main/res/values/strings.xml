@@ -90,6 +90,7 @@
     <string name="sender_pair_title">配对码</string>
     <string name="sender_pair_desc">接收端输入此码后才能看画面并控制</string>
     <string name="sender_warn_a11y">控制权限未开启，对方只能看不能操作 · 点此开启</string>
+    <string name="sender_a11y_privacy_hint">无障碍已开启。若微信 / QQ 投屏发虚、像蒙了层毛玻璃，是系统的「屏幕共享防护」在拦截：设置 → 搜「电诈防护」→ 关闭「屏幕共享防护」，或在投屏时点屏幕左上角的提示选择「继续共享」。</string>
     <string name="sender_quality_title">画质（接收端卡顿时选「流畅」）</string>
     <string name="sender_q_smooth">流畅 4M</string>
     <string name="sender_q_balanced">均衡 6M</string>

@@ -91,6 +91,7 @@
     <string name="sender_pair_title">Pair code</string>
     <string name="sender_pair_desc">The receiver needs this code to view and control</string>
     <string name="sender_warn_a11y">Control disabled — view only · tap to enable</string>
+    <string name="sender_a11y_privacy_hint">Accessibility is on. If WeChat / QQ looks blurred while mirroring, the system screen-sharing protection is blocking it: Settings → search “anti-fraud” → turn off “Screen sharing protection”, or tap the notice at the top-left while mirroring and choose “Continue sharing”.</string>
     <string name="sender_quality_title">Quality (pick Smooth if the receiver lags)</string>
     <string name="sender_q_smooth">Smooth 4M</string>
     <string name="sender_q_balanced">Balanced 6M</string>

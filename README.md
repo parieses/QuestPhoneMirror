@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.17-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.18-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -170,7 +170,14 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 ## 📝 更新日志
 
-### v0.17（本轮）
+### v0.18（本轮）
+
+**改进**
+- **「屏幕共享防护」提示**：无障碍开启后，发送端界面会多一条说明——微信 / QQ 投屏发虚、像蒙了层毛玻璃，是系统（小米/澎湃OS 的「电诈防护 → 屏幕共享防护」）检测到「屏幕共享 + 具备控制能力的无障碍服务」后对敏感应用做的**模糊遮罩**，与投屏画质无关。README 常见问题同步给出三种处理方式（关闭系统开关 / 投屏时点左上角「继续共享」/ 只在需要控制时开无障碍）
+
+* * *
+
+### v0.17
 
 **修复**
 - **接收端解码器按发送端真实分辨率配置**：此前 configure 用写死的 1920×1080，而手机实际画面是 1440×3200 / 3200×1440 这类尺寸——硬解在尺寸明显不符时，部分机型会在 native 层直接崩溃（Java 层拦不住，表现为「带配对成功却闪退回首页」「手机一转屏接收端就没了」）。现在收到 `SCREEN_INFO` 就按真实尺寸创建解码器，尺寸变化时**热替换**新解码器（`MirrorClient.decoder` 改为可替换，旧实例立即停掉），进程内还会记住上次尺寸，重建/重进界面都不再退回默认值
@@ -362,8 +369,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.17        # 版本号唯一来源就是 git tag
-git push origin v0.17
+git tag v0.18        # 版本号唯一来源就是 git tag
+git push origin v0.18
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
@@ -383,6 +390,7 @@ CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 G
 | 画面卡 / 延迟高 | 画质切「流畅」；换 5G Wi-Fi；确认两端离路由器不远 |
 | 横屏看视频 / 玩游戏时，接收端画面挤成中间一条 | 手机屏幕已经横过来、编码器却还在按竖屏尺寸出图，系统就把横屏画面缩进竖屏缓冲里（表现为上下大片黑边、视频只占中间 20% 高）。新版已同时监听显示配置变化与传感器角度，任一触发就按新尺寸重建编码器；旧版遇到时**在横屏状态下停止投屏再重新开始**即可（重连不会重建编码器） |
 | 解码错误提示 | 返回重进接收端；系统版本过旧的设备可能缺 H.264 硬解 |
+| 开启无障碍后，微信 / QQ 投屏像蒙了一层毛玻璃（关掉无障碍就正常） | 系统的「屏幕共享防护」（小米/澎湃OS 在 **设置 → 电诈防护 → 屏幕共享防护**，部分机型在 **开发者选项 → 停用屏幕防护共享**）检测到「屏幕共享 + 具备控制能力的无障碍服务」，就会把微信、QQ、相册、支付宝等敏感应用**模糊遮罩**。这不是投屏编码问题，也不是本 App 能绕过的。三种处理：① 关闭该系统开关；② 投屏时点屏幕左上角/顶部的提示，选择「继续共享」（单次放行）；③ 只在需要反向控制时才开「QPM 控制服务」，看完敏感应用就关掉 |
 | Netflix 等黑屏 | DRM 硬件保护，无法镜像 |
 
 ## ⚠️ 已知限制

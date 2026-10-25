@@ -122,6 +122,19 @@
                 android:textColor="#FCD34D"
                 android:textSize="13sp"
                 android:visibility="gone" />
+
+            <!-- 无障碍已开启时提示：部分 ROM 的「屏幕共享防护」会把微信/QQ 等画面糊掉 -->
+            <TextView
+                android:id="@+id/tvA11yHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/hint_bg"
+                android:padding="12dp"
+                android:text="@string/sender_a11y_privacy_hint"
+                android:textColor="#93C5FD"
+                android:textSize="12sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <!-- 投屏设置：画质 + 防息屏合并为一张卡 -->
