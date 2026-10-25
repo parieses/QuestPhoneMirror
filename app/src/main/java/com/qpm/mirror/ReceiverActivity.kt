@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.media.MediaCodecList
+import android.media.MediaFormat
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -11,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -163,26 +166,21 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         QpmLog.i(TAG, "surfaceCreated：Surface 就绪，初始化解码器")
         destroyed = false
         uiHandler.removeCallbacks(pairTimeoutRunnable)
-        val dec = try {
-            // 用最近一次已知的真实尺寸配置：写死 1920x1080 去解 3200x1440 这类码流，
-            // 部分机型硬解会在 native 层崩溃（Java 层抓不到 → 表现为「连上就闪退」）
-            H264Decoder(
-                surface = holder.surface,
-                onVideoSize = { w, h -> runUi { fitSurface(w, h) } },
-                onError = { msg ->
-                    QpmLog.e(TAG, "解码器错误: $msg")
-                    runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
-                },
-                videoW = lastVideoW,
-                videoH = lastVideoH
-            )
-        } catch (e: Exception) {
-            QpmLog.e(TAG, "解码器初始化失败: ${e.message}", e)
+        // 用最近一次已知的真实尺寸配置（候选链兜底，见 buildDecoder）：
+        // 写死 1920x1080 或直接拿超限尺寸硬配，都会在部分机型上出问题
+        val built = buildDecoder(holder.surface, lastVideoW, lastVideoH)
+        if (built == null) {
+            QpmLog.e(TAG, "解码器初始化失败（${lastVideoW}x$lastVideoH）")
             tvStage.text = getString(R.string.receiver_decoder_fail)
-            tvStageHint.text = e.message ?: getString(R.string.receiver_h264_unsupported)
+            tvStageHint.text = getString(R.string.receiver_decoder_fail_all, lastVideoW, lastVideoH)
             return
         }
-        QpmLog.i(TAG, "解码器初始化成功（${lastVideoW}x${lastVideoH}），开始连接")
+        val (dec, used) = built
+        if (used.first != lastVideoW || used.second != lastVideoH) {
+            QpmLog.w(TAG, "初始解码器 ${lastVideoW}x$lastVideoH 超限，降级 ${used.first}x${used.second}")
+            hint.text = getString(R.string.receiver_decoder_clamped, lastVideoW, lastVideoH, used.first, used.second)
+        }
+        QpmLog.i(TAG, "解码器初始化成功（${used.first}x${used.second}），开始连接")
         decoder = dec
 
         mapper = TouchMapper(
@@ -627,6 +625,11 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
      * 硬解在 configure 时拿到的尺寸与实际码流差别较大时，部分机型会在 native 层崩溃
      * （Java 层拦不住，表现为「连接成功就闪退回首页」「手机一转屏接收端就没了」）。
      * 发送端每次配对/转向都会先发 SCREEN_INFO 再发新码流，所以这里能赶在首帧前重建。
+     *
+     * 真实尺寸 configure 也可能直接失败：1440x3200 这类 20:9 竖屏的高度超出多数机型
+     * AVC 硬解上限（c2 常见 2048），configure 抛 IllegalArgumentException。旧实现此时
+     * 只记日志 return，留下 1080p 旧解码器去解 3200 高的码流——正是 v0.17 前「连上就
+     * 闪退」的 native 崩溃场景。现按候选链逐个试创建，全部失败才放弃并提示。
      */
     private fun ensureDecoderSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
@@ -639,26 +642,102 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
             QpmLog.w(TAG, "按 ${w}x$h 重建解码器跳过：Surface 无效")
             return
         }
-        val dec = try {
-            H264Decoder(
-                surface = surface,
-                onVideoSize = { vw, vh -> runUi { fitSurface(vw, vh) } },
-                onError = { msg ->
-                    QpmLog.e(TAG, "解码器错误: $msg")
-                    runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
-                },
-                videoW = w,
-                videoH = h
-            )
-        } catch (e: Exception) {
-            QpmLog.e(TAG, "按 ${w}x$h 重建解码器失败: ${e.message}", e)
+        val built = buildDecoder(surface, w, h)
+        if (built == null) {
+            QpmLog.e(TAG, "所有候选尺寸均无法创建解码器（目标 ${w}x$h）")
+            hint.text = getString(R.string.receiver_decoder_fail_all, w, h)
             return
         }
+        val (dec, used) = built
         // 先换引用再停旧实例：网络线程只会喂给当前实例，在途帧由 feed() 的 alive 守卫兜住
         decoder = dec
         client?.decoder = dec
         runCatching { cur?.stop() }
-        QpmLog.i(TAG, "解码器已按 ${w}x$h 重建（旧 ${cur?.videoW}x${cur?.videoH}）")
+        if (used.first != w || used.second != h) {
+            QpmLog.w(TAG, "按 ${w}x$h 重建解码器失败，已降级 ${used.first}x${used.second} 兼容投屏")
+            hint.text = getString(R.string.receiver_decoder_clamped, w, h, used.first, used.second)
+        } else {
+            QpmLog.i(TAG, "解码器已按 ${w}x$h 重建（旧 ${cur?.videoW}x${cur?.videoH}）")
+        }
+    }
+
+    /**
+     * 按候选链创建解码器，返回 (解码器, 实际尺寸)；全部失败返回 null。
+     * 候选链见 [decoderSizeCandidates]。
+     */
+    private fun buildDecoder(surface: Surface, w: Int, h: Int): Pair<H264Decoder, Pair<Int, Int>>? {
+        for ((cw, ch) in decoderSizeCandidates(w, h)) {
+            val dec = try {
+                H264Decoder(
+                    surface = surface,
+                    onVideoSize = { vw, vh -> runUi { fitSurface(vw, vh) } },
+                    onError = { msg ->
+                        QpmLog.e(TAG, "解码器错误: $msg")
+                        runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
+                    },
+                    videoW = cw,
+                    videoH = ch
+                )
+            } catch (e: Exception) {
+                QpmLog.w(TAG, "创建 ${cw}x$ch 解码器失败: ${e.message}")
+                null
+            } ?: continue
+            return dec to (cw to ch)
+        }
+        return null
+    }
+
+    /**
+     * 解码器尺寸候选链：真实尺寸 → 钳制到本机 AVC 硬解能力上限 → 保底 1080p。
+     *
+     * clamp 保持宽高比并取 16 对齐（AVC 要求）。configure 尺寸允许小于码流 SPS 尺寸：
+     * 解码器按 SPS 输出真实尺寸（onOutputFormatChanged → fitSurface 等比布局），
+     * 比让不支持大尺寸的机器硬吃超限码流导致 native 崩溃安全得多。
+     */
+    private fun decoderSizeCandidates(w: Int, h: Int): List<Pair<Int, Int>> {
+        val list = mutableListOf(w to h)
+        val (maxW, maxH) = avcDecoderMaxSize()
+        val clamped = clampAligned(w, h, maxW, maxH)
+        if (clamped != w to h && clamped !in list) list.add(clamped)
+        val fallback = minOf(w, 1920) to minOf(h, 1080)
+        if (fallback !in list) list.add(fallback)
+        return list
+    }
+
+    /** 本机 AVC 硬解支持的最大宽/高（取所有硬解里最小的上限；查询失败按不限处理）。 */
+    private fun avcDecoderMaxSize(): Pair<Int, Int> {
+        avcMaxCache?.let { return it }
+        val result = runCatching {
+            var best = Int.MAX_VALUE to Int.MAX_VALUE
+            val infos = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            for (info in infos) {
+                if (info.isEncoder) continue
+                if (MediaFormat.MIMETYPE_VIDEO_AVC !in info.supportedTypes) continue
+                val caps = runCatching {
+                    info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                }.getOrNull() ?: continue
+                val vc = caps.videoCapabilities ?: continue
+                val mw = runCatching { vc.supportedWidths.upper }.getOrNull() ?: continue
+                val mh = runCatching { vc.supportedHeights.upper }.getOrNull() ?: continue
+                if (mw <= 0 || mh <= 0) continue
+                best = minOf(best.first, mw) to minOf(best.second, mh)
+            }
+            best
+        }.getOrDefault(Int.MAX_VALUE to Int.MAX_VALUE)
+        avcMaxCache = result
+        return result
+    }
+
+    /** 等比缩放到上限内并取 16 对齐；未超限原样返回。 */
+    private fun clampAligned(w: Int, h: Int, maxW: Int, maxH: Int): Pair<Int, Int> {
+        if (maxW <= 0 || maxH <= 0) return w to h
+        if (w <= maxW && h <= maxH) return w to h
+        val scale = minOf(maxW.toFloat() / w, maxH.toFloat() / h)
+        var nw = ((w * scale) / 16).toInt() * 16
+        var nh = ((h * scale) / 16).toInt() * 16
+        if (nw <= 0) nw = 16
+        if (nh <= 0) nh = 16
+        return nw to nh
     }
 
     /** 让 SurfaceView 保持手机屏幕宽高比，居中显示。 */
@@ -702,5 +781,9 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         @Volatile
         private var lastVideoH = 1080
+
+        /** AVC 硬解最大宽高缓存（进程内查一次即可，能力不会变）。 */
+        @Volatile
+        private var avcMaxCache: Pair<Int, Int>? = null
     }
 }

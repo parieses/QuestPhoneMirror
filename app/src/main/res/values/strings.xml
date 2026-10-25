@@ -153,6 +153,8 @@
     <string name="receiver_need_code_hint">检测到局域网内有多个发送端，请输入目标发送端显示的 6 位配对码</string>
     <string name="receiver_decoder_fail">解码器初始化失败</string>
     <string name="receiver_decoder_error">解码错误：%1$s，返回重进重试</string>
+    <string name="receiver_decoder_clamped">本机不支持 %1$dx%2$d 硬解，已按 %3$dx%4$d 兼容投屏；如画面异常请在发送端降低分辨率</string>
+    <string name="receiver_decoder_fail_all">本机无法解码 %1$dx%2$d 画面，请更换接收设备或在发送端降低分辨率</string>
     <string name="receiver_h264_unsupported">本机不支持 H.264 硬解</string>
     <string name="receiver_device_name">接收端</string>
     <string name="receiver_clip_copied">已复制到本机剪贴板</string>
