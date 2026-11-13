@@ -924,18 +924,6 @@ class CastService : Service() {
         private val onPaired: (Client) -> Unit,
         private val onClose: (Client) -> Unit
     ) {
-        /**
-         * 队列项带入队时刻、有效长度与关键帧标记：过期帧不再写入 socket，关键帧永不牺牲。
-         * slot 非空表示 wire 来自共享帧池，长度可能小于数组容量，写出必须用 [len]。
-         */
-        private data class PendingFrame(
-            val wire: ByteArray,
-            val len: Int,
-            val atMs: Long,
-            val critical: Boolean,
-            val slot: WireFramePool.Slot?
-        )
-
         private val queue = LinkedBlockingQueue<PendingFrame>(QUEUE_DEPTH)
         /**
          * 公平锁：控制帧（sendReliable）与视频帧（writeLoop）共用一把锁串行写 socket，
@@ -1327,6 +1315,19 @@ class CastService : Service() {
         }
     }
 }
+
+/**
+ * 队列项带入队时刻、有效长度与关键帧标记：过期帧不再写入 socket，关键帧永不牺牲。
+ * slot 非空表示 wire 来自共享帧池，长度可能小于数组容量，写出必须用 [len]。
+ * 必须放在顶层：Kotlin 不允许在 inner class 内部声明嵌套类。
+ */
+private data class PendingFrame(
+    val wire: ByteArray,
+    val len: Int,
+    val atMs: Long,
+    val critical: Boolean,
+    val slot: WireFramePool.Slot?
+)
 
 /**
  * 发送端 wire 帧池：固定槽 + 引用计数，砍掉每帧一次 25KB 级大数组分配。
