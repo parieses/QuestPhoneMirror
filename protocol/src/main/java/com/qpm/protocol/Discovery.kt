@@ -90,8 +90,15 @@ object Discovery {
     fun scanAll(durationMs: Long): Pair<List<Device>, List<Receiver>> {
         val senders = LinkedHashMap<String, Device>()
         val receivers = LinkedHashMap<String, Receiver>()
+        // 发送端 peerWatchLoop 常驻监听 45555，手动「扫描接收端」会并发再开一个 socket。
+        // 不带 SO_REUSEADDR 时第二个 bind 直接失败，扫描永远返回空列表；Linux 上 UDP
+        // 广播包会投递给所有带 SO_REUSEADDR 的监听者，两个循环可以并存。
         val socket = try {
-            DatagramSocket(PORT)
+            val unbound: java.net.SocketAddress? = null
+            DatagramSocket(unbound).apply {
+                reuseAddress = true
+                bind(java.net.InetSocketAddress(PORT))
+            }
         } catch (_: Exception) {
             return emptyList<Device>() to emptyList()
         }

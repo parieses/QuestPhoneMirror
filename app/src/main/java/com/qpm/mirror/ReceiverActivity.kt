@@ -87,6 +87,8 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private var statsOn = false
     private var statsTimer: Timer? = null
     private var latestStats: IntArray? = null
+    /** [p50, p95, rttMs, jitter]，由 MirrorClient 每秒回报。 */
+    @Volatile private var latestLatency: IntArray? = null
     private var prevDecoded = 0L
     private var prevDecodedTs = 0L
 
@@ -205,11 +207,16 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         cryptoFailedThisConnection = false
         client = MirrorClient(
             decoder = dec,
-            onScreenInfo = { w, h, _ ->
+            onScreenInfo = { w, h, _, vw, vh ->
+                // 解码器重建必须在这条收帧线程上同步完成：MirrorClient 处理完 SCREEN_INFO
+                // 才会读下一帧视频。若把重建 post 到主线程，网络线程会先把新尺寸码流喂给
+                // 旧尺寸解码器，部分机型硬解在 native 层直接 SIGSEGV（Java 层拦不住，
+                // 表现就是「配对成功/连接上立刻闪退，日志里没有堆栈」）。
+                // 按码流尺寸 configure；真实屏幕尺寸只用于触摸映射（降采样后两者不同）。
+                ensureDecoderSize(vw, vh)
                 runUi {
                     fitSurface(w, h)
                     hint.text = ""
-                    ensureDecoderSize(w, h)
                 }
             },
             onStatus = { s -> runUi { onStatus(s) } },
@@ -220,6 +227,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
             onClipboard = { text -> runUi { onClipboardText(text) } },
             onFilePushResult = { ok, msg -> runUi { onFilePushResult(ok, msg) } },
             onStats = { stats -> latestStats = stats },
+            onLatency = { v -> latestLatency = v },
             helloName = Build.MODEL ?: getString(R.string.receiver_device_name),
             cryptoEnabled = useEncryption
         )
@@ -616,7 +624,11 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         } else {
             "${bitrate / 1000} Kbps"
         }
-        statsView.text = getString(R.string.receiver_stats_line, w, h, fps, bps, dropped, decodedFps)
+        val base = getString(R.string.receiver_stats_line, w, h, fps, bps, dropped, decodedFps)
+        val lat = latestLatency
+        statsView.text = if (lat != null && lat.size >= 4) {
+            base + "\n" + getString(R.string.receiver_stats_latency, lat[0], lat[1], lat[2], lat[3])
+        } else base
     }
 
     /**
@@ -633,11 +645,13 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
      */
     private fun ensureDecoderSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
+        // 可能从 MirrorClient 收帧线程调用：页面/Surface 已销毁时不再碰解码器
+        if (destroyed || isFinishing || isDestroyed) return
         lastVideoW = w
         lastVideoH = h
         val cur = decoder
         if (cur != null && cur.videoW == w && cur.videoH == h) return
-        val surface = surfaceView.holder.surface
+        val surface = runCatching { surfaceView.holder.surface }.getOrNull()
         if (surface == null || !surface.isValid) {
             QpmLog.w(TAG, "按 ${w}x$h 重建解码器跳过：Surface 无效")
             return
@@ -645,7 +659,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         val built = buildDecoder(surface, w, h)
         if (built == null) {
             QpmLog.e(TAG, "所有候选尺寸均无法创建解码器（目标 ${w}x$h）")
-            hint.text = getString(R.string.receiver_decoder_fail_all, w, h)
+            runUi { hint.text = getString(R.string.receiver_decoder_fail_all, w, h) }
             return
         }
         val (dec, used) = built
@@ -655,7 +669,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         runCatching { cur?.stop() }
         if (used.first != w || used.second != h) {
             QpmLog.w(TAG, "按 ${w}x$h 重建解码器失败，已降级 ${used.first}x${used.second} 兼容投屏")
-            hint.text = getString(R.string.receiver_decoder_clamped, w, h, used.first, used.second)
+            runUi { hint.text = getString(R.string.receiver_decoder_clamped, w, h, used.first, used.second) }
         } else {
             QpmLog.i(TAG, "解码器已按 ${w}x$h 重建（旧 ${cur?.videoW}x${cur?.videoH}）")
         }

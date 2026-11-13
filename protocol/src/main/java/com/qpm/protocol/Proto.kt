@@ -5,7 +5,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 
-/** 消息类型。手机 -> 接收端用 0x01/0x20/0x15/0x17/0x19/0x1A/0x1C/0x1F/0x23，接收端 -> 手机用 0x10-0x14/0x16/0x18/0x1B/0x1D/0x21/0x22。 */
+/** 消息类型。手机 -> 接收端用 0x01/0x20/0x15/0x17/0x19/0x1A/0x1C/0x1F/0x23/0x25，接收端 -> 手机用 0x10-0x14/0x16/0x18/0x1B/0x1D/0x21/0x22/0x24/0x26-0x29。 */
 object Type {
     const val VIDEO_FRAME: Byte = 0x01
     const val SCREEN_INFO: Byte = 0x20
@@ -47,6 +47,18 @@ object Type {
     const val FILE_PUSH_DATA: Byte = 0x22
     /** 文件推送：结果，body = [ok:u8][msg UTF-8]；ok=1 时 msg 为手机侧保存路径 */
     const val FILE_PUSH_RES: Byte = 0x23
+
+    /** 延迟探针：接收端 -> 手机，body = [t1:u32]（接收端 elapsedRealtime 低 32 位） */
+    const val PING: Byte = 0x24
+    /** 延迟探针应答：手机 -> 接收端，body = [t1:u32][t2:u32]（t1 原样回带，t2 为手机侧时刻） */
+    const val PONG: Byte = 0x25
+    /** 接收端反馈：body = [decodedFps:u16][backlogMs:u16][dropped:u16][rttMs:u16]，驱动发送端自适应码率 */
+    const val FEEDBACK: Byte = 0x26
+
+    /** 连续手势：接收端 -> 手机。DOWN 建手势，MOVE 批量续接，UP 收尾，取代逐条 TAP/SWIPE 的断开式注入 */
+    const val TOUCH_DOWN: Byte = 0x27
+    const val TOUCH_MOVE: Byte = 0x28
+    const val TOUCH_UP: Byte = 0x29
 }
 
 /** 视频帧附加标志 */
@@ -64,21 +76,52 @@ class Frame(val type: Byte, val body: ByteArray)
 object Proto {
     const val MAX_BODY = 4 shl 20
 
+    /**
+     * VIDEO_FRAME 的 body 头长度：[pts:u64][flags:u8][sentAtMs:u32][h264]。
+     * sentAtMs 是发送端 SystemClock.elapsedRealtime() 的低 32 位，接收端靠相邻帧
+     * 「到达间隔 - 发送间隔」的差值测积压，不需要两端时钟同步；Int 回绕对短间隔差值天然正确。
+     */
+    const val VIDEO_HEADER = 13
+
     private fun head(type: Byte, bodySize: Int): ByteBuffer =
         ByteBuffer.allocate(5 + bodySize).order(ByteOrder.LITTLE_ENDIAN)
             .put(type).putInt(bodySize)
 
-    fun videoFrame(ptsUs: Long, flags: Int, data: ByteArray, off: Int, len: Int): ByteArray {
-        val b = head(Type.VIDEO_FRAME, 9 + len)
+    /** 把完整 wire 帧写进调用方提供的缓冲，返回写入字节数；缓冲不足返回 -1（供发送端帧池复用）。 */
+    fun videoFrameInto(
+        dst: ByteArray, ptsUs: Long, flags: Int, sentAtMs: Int,
+        data: ByteArray, off: Int, len: Int
+    ): Int {
+        val bodyLen = VIDEO_HEADER + len
+        val total = 5 + bodyLen
+        if (dst.size < total) return -1
+        val b = ByteBuffer.wrap(dst).order(ByteOrder.LITTLE_ENDIAN)
+        b.put(Type.VIDEO_FRAME).putInt(bodyLen)
         b.putLong(ptsUs)
         b.put(flags.toByte())
+        b.putInt(sentAtMs)
         b.put(data, off, len)
-        return b.array()
+        return total
     }
 
-    fun screenInfo(w: Int, h: Int, dpi: Int): ByteArray {
-        val b = head(Type.SCREEN_INFO, 12)
+    fun videoFrameSize(len: Int): Int = 5 + VIDEO_HEADER + len
+
+    fun videoFrame(ptsUs: Long, flags: Int, sentAtMs: Int, data: ByteArray, off: Int, len: Int): ByteArray {
+        val dst = ByteArray(videoFrameSize(len))
+        videoFrameInto(dst, ptsUs, flags, sentAtMs, data, off, len)
+        return dst
+    }
+
+    /**
+     * [屏幕宽:u32][屏幕高:u32][dpi:u32][视频宽:u32][视频高:u32]。
+     * 前 12 字节沿用旧格式（旧接收端只读前三个字段，行为不变）。后两个字段是实际
+     * 编码尺寸：发送端按长边降采样后与屏幕尺寸不同，接收端需按码流尺寸 configure
+     * 解码器，触摸映射仍用前两个字段的真实屏幕尺寸。
+     */
+    fun screenInfo(w: Int, h: Int, dpi: Int, videoW: Int, videoH: Int): ByteArray {
+        val b = head(Type.SCREEN_INFO, 20)
         b.putInt(w); b.putInt(h); b.putInt(dpi)
+        b.putInt(videoW); b.putInt(videoH)
         return b.array()
     }
 
@@ -237,6 +280,44 @@ object Proto {
         b.put(raw)
         return b.array()
     }
+
+    // ---------- 延迟探针 / 反馈 / 连续手势 ----------
+
+    fun ping(t1: Int): ByteArray {
+        val b = head(Type.PING, 4)
+        b.putInt(t1)
+        return b.array()
+    }
+
+    fun pong(t1: Int, t2: Int): ByteArray {
+        val b = head(Type.PONG, 8)
+        b.putInt(t1); b.putInt(t2)
+        return b.array()
+    }
+
+    fun feedback(decodedFps: Int, backlogMs: Int, dropped: Int, rttMs: Int): ByteArray {
+        val b = head(Type.FEEDBACK, 8)
+        b.putShort(decodedFps.coerceIn(0, 65535).toShort())
+        b.putShort(backlogMs.coerceIn(0, 65535).toShort())
+        b.putShort(dropped.coerceIn(0, 65535).toShort())
+        b.putShort(rttMs.coerceIn(0, 65535).toShort())
+        return b.array()
+    }
+
+    fun touchDown(x: Float, y: Float): ByteArray {
+        val b = head(Type.TOUCH_DOWN, 8)
+        b.putFloat(x); b.putFloat(y)
+        return b.array()
+    }
+
+    /** body 为连续的 x,y 浮点对（每点 8 字节），接收端按 32ms 窗口批量发。 */
+    fun touchMove(points: FloatArray): ByteArray {
+        val b = head(Type.TOUCH_MOVE, points.size * 4)
+        points.forEach { b.putFloat(it) }
+        return b.array()
+    }
+
+    fun touchUp(): ByteArray = head(Type.TOUCH_UP, 0).array()
 }
 
 /** 阻塞读取完整帧；流结束返回 null。 */
@@ -268,6 +349,18 @@ object Decoders {
     fun screenInfo(f: Frame): Triple<Int, Int, Int> {
         val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
         return Triple(b.int, b.int, b.int)
+    }
+
+    /** SCREEN_INFO 携带的编码尺寸；旧版 12 字节帧回退到屏幕尺寸。 */
+    fun videoSizeOf(f: Frame): Pair<Int, Int> {
+        if (f.body.size < 20) {
+            val (w, h, _) = screenInfo(f)
+            return w to h
+        }
+        val b = ByteBuffer.wrap(f.body, 12, 8).order(ByteOrder.LITTLE_ENDIAN)
+        val vw = b.int
+        val vh = b.int
+        return vw to vh
     }
 
     fun tap(f: Frame): Pair<Float, Float> {
@@ -349,6 +442,37 @@ object Decoders {
         val ok = f.body.isNotEmpty() && f.body[0] != 0.toByte()
         val msg = if (f.body.size > 1) String(f.body, 1, f.body.size - 1, StandardCharsets.UTF_8) else ""
         return Pair(ok, msg)
+    }
+
+    /** VIDEO_FRAME 里的发送端时刻（低 32 位）；旧版 9 字节头返回 0。 */
+    fun videoSentAt(f: Frame): Int =
+        if (f.body.size >= Proto.VIDEO_HEADER) {
+            ByteBuffer.wrap(f.body, 9, 4).order(ByteOrder.LITTLE_ENDIAN).int
+        } else 0
+
+    fun pingOf(f: Frame): Int =
+        if (f.body.size >= 4) ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN).int else 0
+
+    /** PONG：[t1, t2]。 */
+    fun pongOf(f: Frame): IntArray {
+        if (f.body.size < 8) return intArrayOf(0, 0)
+        val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
+        return intArrayOf(b.int, b.int)
+    }
+
+    /** FEEDBACK：[decodedFps, backlogMs, dropped, rttMs]。 */
+    fun feedbackOf(f: Frame): IntArray {
+        if (f.body.size < 8) return IntArray(4)
+        val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
+        return IntArray(4) { b.short.toInt() and 0xFFFF }
+    }
+
+    /** TOUCH_MOVE 的点序列 [x1,y1,x2,y2,...]；长度非 8 的倍数时按整点截断。 */
+    fun touchPoints(f: Frame): FloatArray {
+        val count = f.body.size / 8
+        if (count <= 0) return FloatArray(0)
+        val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
+        return FloatArray(count * 2) { b.float }
     }
 }
 

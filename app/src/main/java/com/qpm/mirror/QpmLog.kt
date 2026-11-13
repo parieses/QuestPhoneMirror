@@ -1,6 +1,8 @@
 package com.qpm.mirror
 
 import android.content.Context
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import java.io.File
 import java.text.SimpleDateFormat
@@ -12,17 +14,27 @@ import java.util.Locale
  * 供「诊断日志」页查看/分享（用户设备上没法学 adb logcat，Quest 更不行）。
  *
  * - 落盘目录：files/logs/qpm-YYYY-MM-DD.log，保留 3 天，单文件 8MB 封顶
- * - 同步写：崩溃前的最后几行必须已在盘上，宁慢勿丢
+ * - i/w 走后台线程，不阻塞收帧/编码/主线程；e 同步落盘，崩溃前最后几行必须在盘上
  * - API 与 android.util.Log 一致（i/w/e/d，(tag, msg[, tr])），便于整体替换
  */
 object QpmLog {
 
     private const val MAX_FILE_BYTES = 8L * 1024 * 1024
     private const val RETAIN_DAYS = 3
-    private val TIME_FMT = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
-    private val DAY_FMT = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
     private val lock = Any()
+
+    /** SimpleDateFormat 非线程安全：旧实现在锁外被编解码/网络/UI 线程共用，改用 ThreadLocal。 */
+    private val TIME_FMT = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue(): SimpleDateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    }
+    private val DAY_FMT = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue(): SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    }
+
+    /** 单独的写盘线程：每条日志原本同步 open→write→close，慢盘上会卡住收帧线程。 */
+    private val writerThread = HandlerThread("QpmLogWriter").apply { start() }
+    private val writerHandler = Handler(writerThread.looper)
 
     @Volatile
     private var dir: File? = null
@@ -56,16 +68,25 @@ object QpmLog {
         // 文件通道
         val d = dir ?: return
         val line = buildString {
-            append(TIME_FMT.format(Date())).append(' ').append(level).append('/')
+            append(TIME_FMT.get()!!.format(Date())).append(' ').append(level).append('/')
             append(tag).append(": ").append(msg)
             if (tr != null) {
                 append('\n').append(Log.getStackTraceString(tr))
             }
         }
+        if (level == 'E') {
+            // 崩溃/错误必须同步落盘：异步队列在进程被杀时会丢最后几行
+            appendLine(d, line)
+        } else {
+            writerHandler.post { appendLine(d, line) }
+        }
+    }
+
+    private fun appendLine(d: File, line: String) {
         synchronized(lock) {
             runCatching {
-                val f = File(d, "qpm-${DAY_FMT.format(Date())}.log")
-                if (f.length() > MAX_FILE_BYTES) return // 单文件封顶，防异常刷盘
+                val f = File(d, "qpm-${DAY_FMT.get()!!.format(Date())}.log")
+                if (f.length() > MAX_FILE_BYTES) return
                 f.appendText(line + "\n")
             }
         }
@@ -79,7 +100,7 @@ object QpmLog {
             runCatching {
                 d.listFiles()?.forEach { f ->
                     val day = f.name.removePrefix("qpm-").removeSuffix(".log")
-                    val ts = runCatching { DAY_FMT.parse(day)?.time }.getOrNull()
+                    val ts = runCatching { DAY_FMT.get()!!.parse(day)?.time }.getOrNull()
                     if (ts != null && ts < cutoff) f.delete()
                 }
             }
@@ -89,7 +110,7 @@ object QpmLog {
     /** 当前日志文件（不存在返回 null）。 */
     fun currentFile(): File? {
         val d = dir ?: return null
-        return File(d, "qpm-${DAY_FMT.format(Date())}.log").takeIf { it.exists() }
+        return File(d, "qpm-${DAY_FMT.get()!!.format(Date())}.log").takeIf { it.exists() }
     }
 
     /** 日志文件总字节数（诊断页展示用）。 */

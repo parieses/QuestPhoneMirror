@@ -19,6 +19,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Display
 import android.view.OrientationEventListener
@@ -31,6 +32,7 @@ import com.qpm.protocol.Frame
 import com.qpm.protocol.FrameReader
 import com.qpm.protocol.Proto
 import com.qpm.protocol.Type
+import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
@@ -41,8 +43,12 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * 发送端服务：MediaProjection 录屏 -> H.264 硬编 -> TCP 推流，
@@ -74,6 +80,25 @@ class CastService : Service() {
         private const val QUEUE_DEPTH = 3
         private const val MAX_PAIR_FAILS = 3
         private const val DEFAULT_BITRATE = 6_000_000
+
+        /** 编码长边上限：手机真实物理分辨率（1440x3200 等）全采全编会吃满 VENC/GPU 并热降频。 */
+        private const val MAX_VIDEO_EDGE = 1280
+        /** 视频帧在队列里超过这个时长就不再写入 socket（TCP 写进去就撤不回来，只会堆延迟）。 */
+        private const val MAX_FRAME_AGE_MS = 150L
+        /** 丢帧后请求关键帧的节流间隔，避免连续请求造成码率尖峰。 */
+        private const val KEY_REQUEST_INTERVAL_MS = 500L
+
+        /**
+         * socket 发送缓冲上限。默认值常有几百 KB，拥塞时内核里排队的旧帧全部「撤不回」，
+         * 延迟会单调累积；限到 64KB 相当于给不可撤回的延迟加一道硬上限。
+         */
+        private const val SOCKET_SEND_BUFFER = 64 * 1024
+
+        /** 发送端 wire 帧池槽数：足够覆盖队列深度 3 × 常见接收端数量，耗尽时退回普通分配。 */
+        private const val FRAME_POOL_SLOTS = 8
+
+        /** 自适应码率档位（bps）；上限由用户在画质档里选定，只在此范围内升降。 */
+        private val BITRATE_STEPS = intArrayOf(2_000_000, 4_000_000, 6_000_000, 10_000_000)
 
         /** 防息屏原值的持久化键与兜底值（原值未知时恢复成 1 分钟）。 */
         private const val KEY_ORIGINAL_TIMEOUT = "original_screen_off_timeout"
@@ -196,6 +221,21 @@ class CastService : Service() {
             }.start()
         }
 
+        /**
+         * 编码尺寸：长边钳到 [MAX_VIDEO_EDGE]、取偶数，dpi 同比例缩放，保持逻辑 dp 不变。
+         * 不做 16 对齐：短边独立对齐会改变宽高比（1080x2340 会偏 2.5%），触摸映射随之
+         * 系统性偏移；MediaCodec 支持非 16 倍数尺寸（旧版本来就按 1080 宽编码），内部
+         * 会自行 pad + crop。SCREEN_INFO 仍上报真实屏幕尺寸，等比缩放后点击不会错位。
+         * 未超限时原样返回。
+         */
+        private fun scaledVideoSize(w: Int, h: Int, dpi: Int): Triple<Int, Int, Int> {
+            val scale = minOf(1f, MAX_VIDEO_EDGE.toFloat() / maxOf(w, h))
+            if (scale >= 1f) return Triple(w, h, dpi)
+            val sw = ((w * scale).toInt() / 2 * 2).coerceAtLeast(2)
+            val sh = ((h * scale).toInt() / 2 * 2).coerceAtLeast(2)
+            return Triple(sw, sh, (dpi * scale).toInt().coerceAtLeast(1))
+        }
+
         @Volatile
         private var instanceRef: CastService? = null
     }
@@ -212,6 +252,12 @@ class CastService : Service() {
     private var pairCode: String = ""
     private var keepAwake: Boolean = true
     private var currentBitrate: Int = DEFAULT_BITRATE
+    /** 用户选定的画质档位，作为自适应码率的上限；currentBitrate 是运行时动态值。 */
+    private var baseBitrate: Int = DEFAULT_BITRATE
+    private var adaptiveIndex: Int = 2
+    private var goodStreak: Int = 0
+    private var lastAdjustAt: Long = 0L
+    private val framePool = WireFramePool(FRAME_POOL_SLOTS)
     private var prevScreenOffTimeout: Int? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -221,10 +267,15 @@ class CastService : Service() {
     private val statDropped = AtomicLong(0)
     private var statsThread: Thread? = null
 
-    /** 当前虚拟显示/编码器尺寸（旋转时对比用，与真实屏幕保持同步）。 */
-    private var videoW: Int = 0
-    private var videoH: Int = 0
-    private var videoDpi: Int = 0
+    /** 当前虚拟显示/编码器尺寸（降采样后的实际码流尺寸，旋转时对比用）。 */
+    @Volatile private var videoW: Int = 0
+    @Volatile private var videoH: Int = 0
+    @Volatile private var videoDpi: Int = 0
+
+    /** 文件下载走独立单线程池：读盘/分片发送不再卡住 readLoop 的控制帧，且全局串行避免分片交错。 */
+    private val fileExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "QpmFileRelay").apply { isDaemon = true }
+    }
     private var orientationListener: OrientationEventListener? = null
     private var displayListener: DisplayManager.DisplayListener? = null
     private var lastRotationBucket: Int = -1
@@ -298,15 +349,21 @@ class CastService : Service() {
         lastFailedSize = 0
         currentPairCode = pairCode
         currentBitrate = bitrate
+        baseBitrate = bitrate
+        adaptiveIndex = BITRATE_STEPS.indexOfLast { it <= bitrate }.coerceAtLeast(0)
+        goodStreak = 0
+        lastAdjustAt = 0L
         lastPeerSeen.set(0L)
         // 每次重新开始投屏都重置白名单与 beacon 缓存，避免上一轮的踢人名单残留
         allowedHosts.clear()
         receiverBeacons.clear()
 
         val metrics = realMetrics()
-        videoW = metrics.widthPixels
-        videoH = metrics.heightPixels
-        videoDpi = metrics.densityDpi
+        val (vw, vh, vdpi) = scaledVideoSize(metrics.widthPixels, metrics.heightPixels, metrics.densityDpi)
+        videoW = vw
+        videoH = vh
+        videoDpi = vdpi
+        QpmLog.i(TAG, "屏幕 ${metrics.widthPixels}x${metrics.heightPixels}@${metrics.densityDpi}dpi -> 编码 ${vw}x${vh}@${vdpi}dpi")
 
         val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projection = pm.getMediaProjection(code, data)
@@ -351,7 +408,7 @@ class CastService : Service() {
             "qpm-cast",
             videoW,
             videoH,
-            metrics.densityDpi,
+            videoDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             enc.inputSurface,
             null,
@@ -366,7 +423,10 @@ class CastService : Service() {
         applyKeepAwake()
         postStatus("投屏中，配对码 $pairCode（仅本机在网时接收端可免码直连）")
         Thread { acceptLoop() }.start()
-        broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, videoW, videoH) }.apply { start() }
+        // beacon 里报真实屏幕尺寸（接收端列表展示用），不是降采样后的码流尺寸
+        broadcastThread = Thread {
+            Discovery.broadcastLoop(TCP_PORT, metrics.widthPixels, metrics.heightPixels)
+        }.apply { start() }
         peerWatchThread = Thread { peerWatchLoop() }.apply { start() }
         startRotationWatch()
     }
@@ -378,12 +438,38 @@ class CastService : Service() {
     private fun newEncoder(w: Int, h: Int, gen: Long): H264Encoder {
         return H264Encoder(w, h, currentBitrate, onFrame = { buf, size, flags, pts ->
             if (gen == activeGen) {
-                val frame = Proto.videoFrame(pts, flags, buf, 0, size)
-                statFrames.incrementAndGet()
-                statBytes.addAndGet(size.toLong())
-                var accepted = false
-                clients.forEach { if (it.offer(frame)) accepted = true }
-                if (!accepted) statDropped.incrementAndGet()
+                // 没有已配对接收端时连帧都不组：省掉每帧的大数组分配，手机等人配对时不再空转发热
+                val targets = clients.filter { it.paired && !it.isClosed }
+                if (targets.isNotEmpty()) {
+                    statFrames.incrementAndGet()
+                    statBytes.addAndGet(size.toLong())
+                    // SPS/PPS 与 IDR 丢了会花屏整整一个 GOP（1s），标记成不可丢
+                    val critical = flags and (H264Encoder.FLAG_KEY or H264Encoder.FLAG_CONFIG) != 0
+                    val sentAt = SystemClock.elapsedRealtime().toInt()
+                    val need = Proto.videoFrameSize(size)
+                    val slot = framePool.acquire(need)
+                    if (slot != null) {
+                        // 编码器输出缓冲在 onFrame 返回后会被复用，这里同步写进池槽；
+                        // 槽内引用计数由 offer()/writeLoop() 维护，回调返回时释放自己那份。
+                        // 用 finally 保证即使组帧异常也不把槽永久占住（否则池会慢慢耗尽）。
+                        try {
+                            val written = Proto.videoFrameInto(slot.bytes, pts, flags, sentAt, buf, 0, size)
+                            if (written == need) {
+                                targets.forEach {
+                                    if (!it.offer(slot.bytes, written, critical, slot)) statDropped.incrementAndGet()
+                                }
+                            }
+                        } finally {
+                            slot.release()
+                        }
+                    } else {
+                        // 池耗尽（多接收端 + 写阻塞）：退回普通分配，宁可多一次 GC 也不丢帧
+                        val wire = Proto.videoFrame(pts, flags, sentAt, buf, 0, size)
+                        targets.forEach {
+                            if (!it.offer(wire, wire.size, critical, null)) statDropped.incrementAndGet()
+                        }
+                    }
+                }
             }
         }, onError = { msg ->
             if (gen == activeGen) {
@@ -467,18 +553,20 @@ class CastService : Service() {
         val w = m.widthPixels
         val h = m.heightPixels
         if (w <= 0 || h <= 0) return
-        if (w == videoW && h == videoH) return
+        // 比对降采样后的编码尺寸，不是真实屏幕尺寸（两者现在不相等，直接比会每次都误触发重建）
+        val (tw, th, tdpi) = scaledVideoSize(w, h, m.densityDpi)
+        if (tw == videoW && th == videoH) return
         // 同一个尺寸刚失败过就别再拆了重试一次了，否则每次显示事件都会黑一下
-        val sizeKey = w * 10000 + h
+        val sizeKey = tw * 10000 + th
         if (sizeKey == lastFailedSize) return
         reconfiguring = true
         val oldW = videoW
         val oldH = videoH
         val oldDpi = videoDpi
         try {
-            QpmLog.i(TAG, "屏幕尺寸变化：${oldW}x$oldH -> ${w}x$h，切换编码器尺寸")
+            QpmLog.i(TAG, "屏幕尺寸变化：${oldW}x$oldH -> ${tw}x$th，切换编码器尺寸")
             postStatus("屏幕方向变化，正在按 ${w}x$h 调整画面…")
-            if (rebuildPipeline(w, h, m.densityDpi)) {
+            if (rebuildPipeline(tw, th, tdpi)) {
                 lastFailedSize = 0
                 postStatus(if (w > h) "已切换为横屏 ${w}x$h" else "已切换为竖屏 ${w}x$h")
                 // SCREEN_INFO 已由 rebuildPipeline 在放行新码流之前播报（顺序敏感，勿在此重发）
@@ -558,7 +646,11 @@ class CastService : Service() {
         // ③ 先播报新尺寸、再放行新码流：接收端收到 SCREEN_INFO 会按新尺寸重建解码器，
         //    若让新尺寸的帧抢先到达，旧尺寸解码器会吃到尺寸不符的码流（部分机型硬解直接崩）。
         //    activeGen 在这之后才更新，保证「SCREEN_INFO 一定先于新尺寸帧」写入 socket。
-        clients.forEach { it.sendReliable(Proto.screenInfo(w, h, dpi)) }
+        // 前三个字段是真实屏幕尺寸（接收端 TouchMapper 按它换算点击坐标），后两个是
+        // 降采样后的码流尺寸（接收端按它 configure 解码器）——两者现在不再相等。
+        val m = realMetrics()
+        val info = Proto.screenInfo(m.widthPixels, m.heightPixels, m.densityDpi, w, h)
+        clients.forEach { it.sendReliable(info) }
 
         // ④ 新流水线已接管，停旧编码器（迟到的回调由代际守卫丢弃）
         runCatching { old.stop() }
@@ -596,10 +688,8 @@ class CastService : Service() {
                     val bytes = statBytes.getAndSet(0)
                     val dropped = statDropped.getAndSet(0)
                     val bitrate = (bytes * 8).toInt() // bits per second
-                    val m = realMetrics()
-                    val stats = Proto.stats(
-                        frames.toInt(), bitrate, m.widthPixels, m.heightPixels, dropped.toInt()
-                    )
+                    // 统计浮窗显示实际推流尺寸（降采样后），不再是手机物理分辨率
+                    val stats = Proto.stats(frames.toInt(), bitrate, videoW, videoH, dropped.toInt())
                     clients.forEach { if (it.paired) it.sendReliable(stats) }
                 } catch (e: Exception) {
                     QpmLog.w(TAG, "统计广播异常: ${e.message}")
@@ -610,12 +700,19 @@ class CastService : Service() {
 
     /** 监听是否有其他 QPM 发送端/接收端在网：前者决定免密直连，后者供连接管理列表。 */
     private fun peerWatchLoop() {
+        var lastSig = ""
         while (running && !Thread.currentThread().isInterrupted) {
             val (peers, receivers) = runCatching { Discovery.scanAll(1200) }.getOrDefault(emptyList<Discovery.Device>() to emptyList())
             receivers.forEach {
                 if (it.name.isNotBlank()) receiverBeacons[it.host] = it.name
             }
-            if (receivers.isNotEmpty()) notifyReceiversChanged()
+            // 只在列表真的变化时才刷 UI：旧实现只要 beacon 在就每 1.2s 全量
+            // removeAllViews + inflate + 挂监听，主线程周期性掉帧
+            val sig = receivers().joinToString(";") { "${it.host}:${it.name}:${it.connected}" }
+            if (sig != lastSig) {
+                lastSig = sig
+                notifyReceiversChanged()
+            }
             // 排除本机自身 beacon（部分设备 UDP 广播会回环），否则会误判「有其他发送端」而永久关闭免密直连
             val others = peers.filter { !isLocalAddress(it.host) }
             if (others.isNotEmpty()) {
@@ -646,10 +743,21 @@ class CastService : Service() {
         try {
             server = ServerSocket(TCP_PORT).apply { reuseAddress = true }
             while (running) {
-                val socket = server!!.accept().apply { tcpNoDelay = true }
+                val socket = server!!.accept().apply {
+                    tcpNoDelay = true
+                    // 限制内核里排队、已不可撤回的字节量：拥塞时不再把几百 KB 旧帧堆进 TCP
+                    runCatching { sendBufferSize = SOCKET_SEND_BUFFER }
+                }
                 val client = Client(socket, onPaired = { c ->
                     val m = realMetrics()
-                    c.offer(Proto.screenInfo(m.widthPixels, m.heightPixels, m.densityDpi))
+                    // 尺寸帧必须走可靠通道同步写出，不能进深度 3 的有界视频队列：
+                    // 配对后 requestKeyFrame 立刻产出 SPS/PPS+IDR（都是 critical），
+                    // 会把队列里的 SCREEN_INFO 挤掉。接收端拿不到码流尺寸就会拿
+                    // 初始 1920x1080 解码器去解降采样码流，部分机型 native 直接崩。
+                    // 这里同步写完再请求关键帧，保证 SCREEN_INFO 一定先于首帧视频。
+                    c.sendReliable(
+                        Proto.screenInfo(m.widthPixels, m.heightPixels, m.densityDpi, videoW, videoH)
+                    )
                     encoder?.requestKeyFrame()
                     postStatus("接收端 ${c.displayName()} 已配对并开始接收画面")
                     notifyReceiversChanged()
@@ -750,6 +858,42 @@ class CastService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * 接收端每秒回报一次 [decodedFps, backlogMs, dropped, rttMs]。
+     * 拥塞就立刻降一档，连续 3 次良好才升一档，避免在阈值附近来回震荡；
+     * 多接收端共用一条编码流，由 1s 节流兜住，任一接收端拥塞都会让整体降档。
+     */
+    private fun onReceiverFeedback(decodedFps: Int, backlogMs: Int, dropped: Int, rttMs: Int) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastAdjustAt < 1000) return
+        lastAdjustAt = now
+        val maxIndex = BITRATE_STEPS.indexOfLast { it <= baseBitrate }.coerceAtLeast(0)
+        val congested = backlogMs > 80 || rttMs > 120 || dropped > 4 || decodedFps in 1..19
+        if (congested) {
+            goodStreak = 0
+            if (adaptiveIndex > 0) {
+                adaptiveIndex--
+                applyAdaptiveBitrate()
+            }
+        } else {
+            goodStreak++
+            if (goodStreak >= 3 && adaptiveIndex < maxIndex) {
+                adaptiveIndex++
+                goodStreak = 0
+                applyAdaptiveBitrate()
+            }
+        }
+    }
+
+    private fun applyAdaptiveBitrate() {
+        val bps = BITRATE_STEPS[adaptiveIndex]
+        currentBitrate = bps
+        // 运行时改 VENC 目标码率，不重建编码器（避免旋转重建那条高崩溃风险路径）
+        runCatching { encoder?.setBitrate(bps) }
+            .onFailure { QpmLog.w(TAG, "动态码率异常: ${it.message}") }
+        QpmLog.i(TAG, "自适应码率 -> ${bps / 1_000_000}Mbps")
+    }
+
     /** 当前已配对接收端的 IP 集合。 */
     private fun connectedReceiverHosts(): Set<String> =
         clients.filter { it.paired }.mapNotNull { it.hostAddress }.toSet()
@@ -780,9 +924,26 @@ class CastService : Service() {
         private val onPaired: (Client) -> Unit,
         private val onClose: (Client) -> Unit
     ) {
-        private val queue = LinkedBlockingQueue<ByteArray>(QUEUE_DEPTH)
-        private val writeLock = Any()
+        /**
+         * 队列项带入队时刻、有效长度与关键帧标记：过期帧不再写入 socket，关键帧永不牺牲。
+         * slot 非空表示 wire 来自共享帧池，长度可能小于数组容量，写出必须用 [len]。
+         */
+        private data class PendingFrame(
+            val wire: ByteArray,
+            val len: Int,
+            val atMs: Long,
+            val critical: Boolean,
+            val slot: WireFramePool.Slot?
+        )
+
+        private val queue = LinkedBlockingQueue<PendingFrame>(QUEUE_DEPTH)
+        /**
+         * 公平锁：控制帧（sendReliable）与视频帧（writeLoop）共用一把锁串行写 socket，
+         * 公平模式下等待中的控制帧不会被连续视频写无限插队。
+         */
+        private val writeLock = ReentrantLock(true)
         @Volatile private var closed = false
+        private var lastKeyRequestAt = 0L
 
         /** 加密通道：本端为发送端，发出方向为 DIR_PHONE。握手前/失败回落时自动透传。 */
         private val channel = SecureChannel(Crypto.DIR_PHONE)
@@ -791,6 +952,8 @@ class CastService : Service() {
         @Volatile
         var paired = false
             private set
+
+        val isClosed: Boolean get() = closed
 
         /** 接收端设备名（HELLO 帧报送），未报送时为空。 */
         @Volatile
@@ -812,22 +975,34 @@ class CastService : Service() {
         private val writer = Thread { writeLoop() }.apply { start() }
         private val reader = Thread { readLoop() }.apply { start() }
 
-        /** 队列满则丢最旧的帧，优先保延迟；未配对时直接丢弃。返回是否成功入队（用于统计丢帧）。 */
-        fun offer(frame: ByteArray): Boolean {
+        /**
+         * 队列满则丢最旧的**非关键帧**——SPS/PPS/IDR/尺寸帧丢了要花屏或错位一整个 GOP。
+         * 返回是否无损入队；false 表示本次牺牲了一帧，供统计丢帧。
+         * 池帧入队时引用 +1（由 writeLoop 写出后释放），被挤掉的旧帧引用 -1。
+         */
+        fun offer(wire: ByteArray, len: Int, critical: Boolean, slot: WireFramePool.Slot?): Boolean {
             if (closed || !paired) return false
-            return if (queue.offer(frame)) {
-                true
-            } else {
-                queue.poll()
-                queue.offer(frame)
+            val f = PendingFrame(wire, len, SystemClock.elapsedRealtime(), critical, slot)
+            var lost = false
+            if (!queue.offer(f)) {
+                val victim = queue.firstOrNull { !it.critical } ?: queue.poll()
+                // 只有真的从队列里摘掉才释放：writeLoop 可能已经 poll 走并释放过这一帧，
+                // 重复释放会让仍在使用的槽被误判为空闲、写出中的帧被覆盖。
+                if (victim != null && queue.remove(victim)) {
+                    victim.slot?.release()
+                }
+                queue.offer(f)
+                lost = true
             }
+            slot?.retain()
+            return !lost
         }
 
         /** 可靠发送：控制结果/文件数据必须到达，武装后自动 AES-GCM 封装帧体。 */
         fun sendReliable(bytes: ByteArray) {
             if (closed) return
             try {
-                synchronized(writeLock) { socket.getOutputStream().write(channel.seal(bytes)) }
+                writeLock.withLock { socket.getOutputStream().write(channel.seal(bytes)) }
             } catch (e: Exception) {
                 // 带异常类型：对端进程消失时不同 ROM 抛的异常消息可能为 null，只有类型可辨
                 QpmLog.w(TAG, "sendReliable 失败: ${e.javaClass.simpleName}: ${e.message}")
@@ -841,7 +1016,25 @@ class CastService : Service() {
                 while (!closed) {
                     // 用 poll 而非 take：close() 后若队列已空，take() 会永久挂起导致线程泄漏
                     val frame = queue.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
-                    synchronized(writeLock) { out.write(channel.seal(frame)) }
+                    // TCP 一旦写入就撤不回来：过期帧再发出去只会把延迟堆到后面每一帧上。
+                    // 关键帧/尺寸帧例外——丢了要等下一个 IDR，花屏比多几十 ms 更难受。
+                    val age = SystemClock.elapsedRealtime() - frame.atMs
+                    if (age > MAX_FRAME_AGE_MS && !frame.critical) {
+                        statDropped.incrementAndGet()
+                        requestKeyFrameThrottled()
+                        frame.slot?.release()
+                        continue
+                    }
+                    try {
+                        writeLock.withLock {
+                            // 视频帧按 type 明文透传，seal 原样返回同一数组；必须按 len 写，
+                            // 否则会把池槽里未使用的尾部字节也发到对端，破坏帧边界。
+                            val wire = channel.seal(frame.wire)
+                            out.write(wire, 0, frame.len)
+                        }
+                    } finally {
+                        frame.slot?.release()
+                    }
                 }
             } catch (e: Exception) {
                 // 之前这里静默 close：对端崩溃导致的断流在日志里完全看不出原因
@@ -850,9 +1043,18 @@ class CastService : Service() {
             }
         }
 
+        /** 丢了 P 帧后参考链已断，尽快要一个 IDR 恢复，别让花屏拖满一个 GOP。 */
+        private fun requestKeyFrameThrottled() {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastKeyRequestAt < KEY_REQUEST_INTERVAL_MS) return
+            lastKeyRequestAt = now
+            runCatching { encoder?.requestKeyFrame() }
+        }
+
         private fun readLoop() {
             try {
-                val reader = FrameReader(socket.getInputStream())
+                // 包一层缓冲：裸流每帧要两次 read syscall（5 字节头 + body）
+                val reader = FrameReader(BufferedInputStream(socket.getInputStream(), 64 * 1024))
                 // 握手阶段：v0.13 接收端连上后先明文发 HELLO（设备名），紧接着明文发 KEY_EXCHANGE
                 // （临时公钥）；旧版/无加密对端则不发 KE。这里循环消费握手帧：
                 // - HELLO：握手前必为明文，立即记录设备名（主循环不再见到它，避免武装后误解密）；
@@ -872,7 +1074,7 @@ class CastService : Service() {
                         val session = if (kp != null) runCatching { Crypto.deriveSessionKey(kp, f.body) }.getOrNull() else null
                         if (kp != null && session != null) {
                             // 先发本方 KE（明文），再武装——保证 KEY_EXCHANGE 帧永不被加密
-                            synchronized(writeLock) {
+                            writeLock.withLock {
                                 socket.getOutputStream().write(Proto.keyExchange(kp.publicEncoded))
                             }
                             channel.arm(session)
@@ -930,7 +1132,11 @@ class CastService : Service() {
                         }
 
                         Type.FILE_LIST_REQ -> if (paired) handleFileList(Decoders.pathOf(frame))
-                        Type.FILE_GET_REQ -> if (paired) handleFileGet(Decoders.pathOf(frame))
+                        // 读盘 + 64KB 分片发送不能占着 readLoop，否则下载期间控制帧全部停摆
+                        Type.FILE_GET_REQ -> if (paired) {
+                            val path = Decoders.pathOf(frame)
+                            fileExecutor.execute { handleFileGet(path) }
+                        }
                         Type.FILE_PUSH_REQ -> if (paired) {
                             val (total, path) = Decoders.filePushReqOf(frame)
                             handleFilePushReq(total, path)
@@ -939,6 +1145,26 @@ class CastService : Service() {
 
                         // 剪贴板同步：接收端 -> 手机（写入手机剪贴板）
                         Type.CLIPBOARD -> if (paired) handleClipboardSync(Decoders.clipboardOf(frame))
+
+                        // 延迟探针：原样回带 t1，接收端用本机时钟算 RTT（不要求时钟同步）
+                        Type.PING -> sendReliable(
+                            Proto.pong(Decoders.pingOf(frame), SystemClock.elapsedRealtime().toInt())
+                        )
+                        // 接收端反馈：驱动自适应码率
+                        Type.FEEDBACK -> if (paired) {
+                            val fb = Decoders.feedbackOf(frame)
+                            this@CastService.onReceiverFeedback(fb[0], fb[1], fb[2], fb[3])
+                        }
+
+                        // 连续手势：DOWN 建手势、MOVE 批量续接、UP 抬手
+                        Type.TOUCH_DOWN -> if (paired) dispatchControl { svc ->
+                            val (x, y) = Decoders.tap(frame)
+                            svc.touchDown(x, y)
+                        }
+                        Type.TOUCH_MOVE -> if (paired) dispatchControl { svc ->
+                            svc.touchMove(Decoders.touchPoints(frame))
+                        }
+                        Type.TOUCH_UP -> if (paired) dispatchControl { svc -> svc.touchUp() }
                     }
                 }
             } catch (e: Exception) {
@@ -1009,7 +1235,7 @@ class CastService : Service() {
                 FileInputStream(file).use { input ->
                     val buf = ByteArray(64 * 1024)
                     var offset = 0L
-                    while (true) {
+                    while (!closed) {
                         val n = input.read(buf)
                         if (n <= 0) {
                             // 读毕补一个空 eof 分片，确保接收端能收尾
@@ -1092,10 +1318,56 @@ class CastService : Service() {
         fun close() {
             if (closed) return
             closed = true
+            // 队列里未写出的池帧必须归还引用，否则槽会永久占用、池逐渐耗尽
+            queue.forEach { it.slot?.release() }
+            queue.clear()
             runCatching { pushOs?.close() }
             runCatching { socket.close() }
             onClose(this)
         }
+    }
+}
+
+/**
+ * 发送端 wire 帧池：固定槽 + 引用计数，砍掉每帧一次 25KB 级大数组分配。
+ * 编码器回调只同步组帧，真正持有帧的是各客户端的有界队列，所以每成功入队一次
+ * 引用 +1，writeLoop 写出（或丢帧 / 连接关闭）时 -1。槽耗尽时调用方退回普通分配，
+ * 最坏情况只是多几次 GC，不会丢帧也不会卡死。
+ * 注意槽内数组可能被扩容复用，长度往往大于实际帧长，写出必须用记录的 len。
+ */
+internal class WireFramePool(size: Int) {
+    class Slot(var bytes: ByteArray) {
+        private val refs = AtomicInteger(0)
+        fun retain() { refs.incrementAndGet() }
+        /** CAS 幂等释放：计数到 0 后重复调用不再递减，避免跨线程竞态把在用的槽判成空闲。 */
+        fun release() {
+            while (true) {
+                val cur = refs.get()
+                if (cur <= 0) return
+                if (refs.compareAndSet(cur, cur - 1)) return
+            }
+        }
+        fun isFree(): Boolean = refs.get() <= 0
+    }
+
+    private val slots = Array(size) { Slot(ByteArray(INITIAL_BYTES)) }
+    private val lock = Any()
+
+    /** 取一个空闲槽并把引用置 1（调用方持有）；池满返回 null。 */
+    fun acquire(need: Int): Slot? {
+        synchronized(lock) {
+            for (s in slots) {
+                if (!s.isFree()) continue
+                if (s.bytes.size < need) s.bytes = ByteArray(maxOf(need, s.bytes.size * 2))
+                s.retain()
+                return s
+            }
+        }
+        return null
+    }
+
+    private companion object {
+        private const val INITIAL_BYTES = 64 * 1024
     }
 }
 

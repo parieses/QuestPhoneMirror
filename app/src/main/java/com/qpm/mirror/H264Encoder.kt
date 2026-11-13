@@ -31,6 +31,21 @@ class H264Encoder(
         private var spsPps: ByteArray? = null
         private val cached = mutableSetOf<String>()
 
+        /**
+         * 输出缓冲复用池。onFrame 是同步调用：调用方必须在回调内把数据复制走，
+         * 返回后这里立即回收该数组。只在同一条 MediaCodec 回调线程上取用，无需加锁。
+         */
+        private val outPool = ArrayDeque<ByteArray>()
+
+        private fun takeBuf(size: Int): ByteArray {
+            val reused = outPool.removeLastOrNull()
+            return if (reused != null && reused.size >= size) reused else ByteArray(size)
+        }
+
+        private fun recycle(buf: ByteArray) {
+            if (outPool.size < 4) outPool.addLast(buf)
+        }
+
         private fun annexb(csd: ByteArray): ByteArray {
             return if (csd.size >= 4 && csd[0] == 0.toByte() && csd[1] == 0.toByte()
                 && csd[2] == 0.toByte() && csd[3] == 1.toByte()) {
@@ -79,9 +94,9 @@ class H264Encoder(
                     runCatching { codec.releaseOutputBuffer(index, false) }
                     return@runCatching
                 }
-                val out = ByteArray(info.size)
+                val out = takeBuf(info.size)
                 buffer.position(info.offset)
-                buffer.get(out)
+                buffer.get(out, 0, info.size)
                 runCatching { codec.releaseOutputBuffer(index, false) }
 
                 val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
@@ -89,7 +104,8 @@ class H264Encoder(
 
                 if (isConfig) {
                     // 这条 buffer 本身就是参数集（部分设备走这里），缓存起来
-                    cacheCsd(out)
+                    cacheCsd(out.copyOf(info.size))
+                    recycle(out)
                     return@runCatching
                 }
 
@@ -99,13 +115,22 @@ class H264Encoder(
                     runCatching { cacheFromFormat(codec.outputFormat) }
                 }
 
-                var flags = 0
-                if (isKey) {
-                    flags = flags or FLAG_KEY
-                    // 每个 IDR 前先补发 SPS/PPS，保证中途连入的接收端也能解码
-                    spsPps?.let { onFrame(it, it.size, FLAG_CONFIG, info.presentationTimeUs) }
+                val pts = info.presentationTimeUs
+                val csd = spsPps
+                if (isKey && csd != null && csd.isNotEmpty()) {
+                    // SPS/PPS 与 IDR 合并成**一帧**再发：分两帧时参数集可能被发送队列
+                    // 挤掉，接收端拿到没有参数集的 IDR 会花屏一整个 GOP。Annex-B 流里
+                    // 参数集紧邻 IDR 是标准形式，MediaCodec 解码器普遍支持。
+                    val merged = takeBuf(csd.size + info.size)
+                    System.arraycopy(csd, 0, merged, 0, csd.size)
+                    System.arraycopy(out, 0, merged, csd.size, info.size)
+                    onFrame(merged, csd.size + info.size, FLAG_KEY, pts)
+                    recycle(merged)
+                } else {
+                    // 拿不到参数集的设备通常把 SPS/PPS 内联在 IDR 里，直接发即可
+                    onFrame(out, info.size, if (isKey) FLAG_KEY else 0, pts)
                 }
-                onFrame(out, info.size, flags, info.presentationTimeUs)
+                recycle(out)
             }.onFailure { QpmLog.w(TAG, "输出回调异常（codec 可能已停止）: ${it.message}") }
         }
 
@@ -135,6 +160,15 @@ class H264Encoder(
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, 30)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                // 实时投屏参数：恒定码率避免画面突变时码率尖峰打爆 Wi-Fi；关 B 帧与
+                // lookahead 消掉编码内 2~4 帧排队（约 60~130ms）；realtime 优先级 +
+                // operating-rate 防止系统把 VENC 调度到低频后帧率上不去。
+                // 用字面量键兼容 minSdk 24：未知键会被编码器忽略，不会让 configure 失败。
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+                setInteger("max-bframes", 0)
+                setInteger("latency", 0)
+                setInteger("priority", 0)
+                setInteger("operating-rate", 30)
             }
             codec.setCallback(callback)
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -153,6 +187,16 @@ class H264Encoder(
             putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
         }
         runCatching { codec.setParameters(params) }
+    }
+
+    /** 自适应码率：不重建编码器，运行时改 VENC 目标码率（多数硬编支持；不支持则忽略）。 */
+    fun setBitrate(bps: Int) {
+        if (bps <= 0) return
+        val params = Bundle().apply {
+            putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bps)
+        }
+        runCatching { codec.setParameters(params) }
+            .onFailure { QpmLog.w(TAG, "动态码率设置失败（${bps}bps）: ${it.message}") }
     }
 
     fun stop() {

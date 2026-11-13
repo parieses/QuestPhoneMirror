@@ -1,5 +1,6 @@
 package com.qpm.mirror
 
+import android.os.SystemClock
 import com.qpm.protocol.Decoders
 import com.qpm.protocol.Discovery
 import com.qpm.protocol.FileChunk
@@ -18,7 +19,8 @@ import java.net.Socket
  */
 class MirrorClient(
     decoder: H264Decoder?,
-    private val onScreenInfo: (Int, Int, Int) -> Unit,
+    /** (真实屏幕宽, 真实屏幕高, dpi, 码流宽, 码流高)：前者用于触摸映射，后者用于 configure 解码器。 */
+    private val onScreenInfo: (Int, Int, Int, Int, Int) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onDisconnected: () -> Unit,
     private val onPairResult: (Boolean) -> Unit = {},
@@ -34,6 +36,8 @@ class MirrorClient(
     private val onFilePushResult: (Boolean, String) -> Unit = { _, _ -> },
     /** 投屏统计回调：fps / bitrateBps / w / h / dropped。 */
     private val onStats: (IntArray) -> Unit = {},
+    /** 端到端延迟回调：[p50, p95, rttMs, jitter]，相对基线值（无需两端时钟同步）。 */
+    private val onLatency: (IntArray) -> Unit = {},
     /** 本机设备名，连接后通过 HELLO 帧报送发送端（连接管理列表展示用）。 */
     private val helloName: String = "",
     /** 是否启用加密通道（默认开；握手失败由调用方关闭后重连用明文）。 */
@@ -133,7 +137,8 @@ class MirrorClient(
 
         // reader 提到函数作用域，关闭加密（cryptoEnabled=false）时主循环仍需使用
         var pending: Frame? = null
-        val reader = FrameReader(s.getInputStream())
+        // 包一层缓冲：裸流每帧要两次 read syscall（5 字节头 + body）
+        val reader = FrameReader(java.io.BufferedInputStream(s.getInputStream(), 64 * 1024))
 
         // 关键：设备名（HELLO）必须在密钥交换握手之前以明文发送。发送端在握手循环里
         // 内联消费它（不过 channel.open），双方加解密计数器从 0 起严格对齐；
@@ -193,6 +198,17 @@ class MirrorClient(
         var lastFrameLogAt = System.currentTimeMillis()
         var firstFrameLogged = false
         var firstVideoLogged = false
+        // 收到 SCREEN_INFO 且解码器按码流尺寸重建完成之前绝不喂帧：初始解码器是
+        // 1920x1080，直接吃降采样码流会在部分机型硬解 native 层 SIGSEGV。
+        // 尺寸帧若因任何原因没到，宁可黑屏也不要让进程直接死掉。
+        var streamReady = false
+
+        // 延迟探针 / 反馈回环：都由主循环按时间驱动，不额外起线程
+        val meter = LatencyMeter()
+        var lastProbeAt = 0L
+        var lastFeedbackAt = 0L
+        var lastDecoded = 0L
+        var lastDecodedAt = 0L
 
         while (true) {
             // 不用 run { break }：非内联 lambda 里的 break/continue 是实验性语言特性，
@@ -214,13 +230,33 @@ class MirrorClient(
                 firstFrameLogged = true
                 QpmLog.i(TAG, "收到首帧 type=${frame.type} size=${frame.body.size}")
             }
+
+            // 每 2s 一次往返探针；每 1s 汇总延迟并回报发送端驱动自适应码率
+            val nowMs = SystemClock.elapsedRealtime()
+            if (nowMs - lastProbeAt >= 2000) {
+                lastProbeAt = nowMs
+                writeCipher(Proto.ping(nowMs.toInt()))
+            }
+            if (nowMs - lastFeedbackAt >= 1000) {
+                onLatency(meter.snapshot())
+                val decoded = decoder?.framesDecoded() ?: 0L
+                val decodedFps = if (lastDecodedAt > 0 && nowMs > lastDecodedAt) {
+                    ((decoded - lastDecoded) * 1000 / (nowMs - lastDecodedAt)).toInt()
+                } else 0
+                lastDecoded = decoded
+                lastDecodedAt = nowMs
+                writeCipher(Proto.feedback(decodedFps, meter.backlogMs, meter.dropped, meter.rttMs))
+                lastFeedbackAt = nowMs
+            }
             // 单帧处理兜底：解码/回调异常只丢这一帧并记日志，
             // 绝不让异常逃逸到网络线程把整条连接打断（表现为「配对成功后立马断」）
             try {
                 when (frame.type) {
                     Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
                     Type.VIDEO_FRAME -> {
-                        decoder?.feed(frame.body)
+                        // 到达时刻 - 发送时刻含固定时钟偏差，取窗口内差值即可消掉偏差
+                        meter.onFrame(Decoders.videoSentAt(frame), SystemClock.elapsedRealtime().toInt())
+                        if (streamReady) decoder?.feed(frame.body)
                         if (!firstVideoLogged) {
                             firstVideoLogged = true
                             QpmLog.i(TAG, "收到首个视频帧 size=${frame.body.size}（此后每 3s 汇总一次）")
@@ -235,9 +271,12 @@ class MirrorClient(
                     }
                     Type.SCREEN_INFO -> {
                         val (w, h, dpi) = Decoders.screenInfo(frame)
+                        val (vw, vh) = Decoders.videoSizeOf(frame)
                         phoneScreenW = w
                         phoneScreenH = h
-                        onScreenInfo(w, h, dpi)
+                        // 同步回调：里面完成解码器重建后才置 streamReady
+                        onScreenInfo(w, h, dpi, vw, vh)
+                        streamReady = true
                     }
                     Type.PAIR_RESULT -> onPairResult(Decoders.pairResultOf(frame))
                     Type.FILE_LIST_RES -> onFileList(Decoders.fileEntriesOf(frame))
@@ -252,7 +291,17 @@ class MirrorClient(
                         val (ok, msg) = Decoders.filePushResOf(frame)
                         onFilePushResult(ok, msg)
                     }
-                    Type.STATS -> onStats(Decoders.statsOf(frame))
+                    Type.STATS -> {
+                        val s = Decoders.statsOf(frame)
+                        meter.dropped = s[4]
+                        onStats(s)
+                    }
+                    Type.PONG -> {
+                        val (t1, _) = Decoders.pongOf(frame)
+                        if (t1 != 0) {
+                            meter.rttMs = (SystemClock.elapsedRealtime().toInt() - t1).coerceIn(0, 65535)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 QpmLog.w(TAG, "帧处理异常 type=${frame.type}: ${e.message}")
@@ -288,5 +337,55 @@ class MirrorClient(
     fun stop() {
         stopped = true
         runCatching { socket?.close() }
+    }
+}
+
+/**
+ * 端到端延迟测量。两端时钟不同源，不能用「到达时刻 - 发送时刻」当绝对延迟；
+ * 取最近 120 帧里该差值的最小值作基线，当前值减基线就是排队积压。
+ * 这样无需 NTP 对时也能看出「越来越卡」，P50/P95 直接反映抖动分布。
+ * RTT 由 PING/PONG 单独测（同一台设备的时钟，无同步问题）。
+ */
+private class LatencyMeter {
+    private val samples = IntArray(WINDOW)
+    private var count = 0
+    private var idx = 0
+    /** 首帧的「到达-发送」差值，作为固定基准，避免 32 位回绕让有符号排序失真。 */
+    private var baseDelta: Int? = null
+
+    @Volatile var rttMs = 0
+    @Volatile var dropped = 0
+    @Volatile var backlogMs = 0
+
+    fun onFrame(sentAt: Int, arriveAt: Int) {
+        if (sentAt == 0) return // 旧版发送端的 9 字节头没有时刻字段
+        val delta = arriveAt - sentAt
+        val base = baseDelta
+        if (base == null) baseDelta = delta
+        samples[idx] = delta - (baseDelta ?: delta)
+        idx = (idx + 1) % WINDOW
+        if (count < WINDOW) count++
+    }
+
+    /** [p50, p95, rttMs, jitter]；样本不足时返回全 0。 */
+    fun snapshot(): IntArray {
+        if (count < 3) {
+            backlogMs = 0
+            return intArrayOf(0, 0, rttMs, 0)
+        }
+        val win = IntArray(count)
+        for (i in 0 until count) win[i] = samples[(idx - count + i + WINDOW) % WINDOW]
+        val sorted = win.sorted()
+        val base = sorted[0]
+        val p50 = (sorted[count / 2] - base).coerceIn(0, MAX_LATENCY_MS)
+        val p95 = (sorted[minOf(count - 1, count * 95 / 100)] - base).coerceIn(0, MAX_LATENCY_MS)
+        backlogMs = (sorted.last() - base).coerceIn(0, MAX_LATENCY_MS)
+        return intArrayOf(p50, p95, rttMs, (p95 - p50).coerceAtLeast(0))
+    }
+
+    private companion object {
+        private const val WINDOW = 120
+        /** 超过 2s 视作异常样本，钳住显示与反馈，避免一次抖动把码率打到最低。 */
+        private const val MAX_LATENCY_MS = 2000
     }
 }

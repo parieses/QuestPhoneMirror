@@ -154,6 +154,8 @@
     <string name="receiver_need_code_hint">Multiple senders detected on the LAN. Enter the 6-digit code shown on the target sender</string>
     <string name="receiver_decoder_fail">Decoder init failed</string>
     <string name="receiver_decoder_error">Decode error: %1$s. Reopen to retry</string>
+    <string name="receiver_decoder_clamped">This device cannot hardware-decode %1$dx%2$d; using %3$dx%4$d instead. Lower the sender resolution if the picture looks wrong</string>
+    <string name="receiver_decoder_fail_all">This device cannot decode %1$dx%2$d video. Use another receiver or lower the sender resolution</string>
     <string name="receiver_h264_unsupported">H.264 hardware decode not supported</string>
     <string name="receiver_device_name">Receiver</string>
     <string name="receiver_clip_copied">Copied to this device\'s clipboard</string>
@@ -172,6 +174,7 @@
     <string name="receiver_push_read_fail">Failed to read local file: %1$s</string>
     <string name="receiver_stats">📊 Stats</string>
     <string name="receiver_stats_line">Res %1$dx%2$d\nCast %3$d FPS  Bitrate %4$s\nDropped %5$d  Decoded %6$d FPS</string>
+    <string name="receiver_stats_latency">Latency P50 %1$d / P95 %2$d ms\nRTT %3$d ms  Jitter %4$d ms</string>
     <string name="receiver_refresh">🔄 Refresh</string>
     <string name="receiver_pair_timeout">Connection timed out: the sender may not be casting, or the network is unreachable. Tap "Refresh" (top-right) to rescan</string>
     <string name="receiver_crypto_off">Encryption handshake failed; switched to plaintext</string>

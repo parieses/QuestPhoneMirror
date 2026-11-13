@@ -1,6 +1,7 @@
 package com.qpm.mirror
 
 import com.qpm.protocol.Frame
+import com.qpm.protocol.Type
 import javax.crypto.SecretKey
 
 /**
@@ -17,6 +18,11 @@ import javax.crypto.SecretKey
  * 握手完成前的帧全部不过 [open]/[seal]（按明文处理），计数器从 0 起严格对齐。
  *
  * nonce 方向：构造参数 [sendDir] 为本端「发出」方向；解密对端帧时用 [sendDir] xor 1。
+ *
+ * 视频帧（VIDEO_FRAME）双端一律明文透传、不参与计数器：它占了 99% 以上的流量，
+ * 每帧两次 GCM + 三次全帧拷贝既拖慢编码线程，又会在 writeLock 内挡住控制帧。
+ * 配对/控制/STATS/文件/剪贴板仍走 AES-GCM，敏感信息不外泄。
+ * **该规则变更要求两端同为新版**；与旧版混连会因明密文与计数器不一致而失败。
  */
 internal class SecureChannel(private val sendDir: Int) {
     @Volatile
@@ -64,6 +70,7 @@ internal class SecureChannel(private val sendDir: Int) {
      */
     fun seal(wire: ByteArray): ByteArray {
         val k = key ?: return wire
+        if (wire.isEmpty() || wire[0] == Type.VIDEO_FRAME) return wire
         return try {
             val type = wire[0]
             val bodyLen = leToInt(wire, 1)
@@ -85,6 +92,7 @@ internal class SecureChannel(private val sendDir: Int) {
     /** 解密一帧；未武装原样返回。任何解密异常退化为透传并清空密钥（自愈为明文），绝不外抛。 */
     fun open(frame: Frame): Frame {
         val k = key ?: return frame
+        if (frame.type == Type.VIDEO_FRAME) return frame
         return try {
             val plain = Crypto.decrypt(k, sendDir xor 1, recvCounter, frame.body)
             recvCounter++

@@ -173,6 +173,7 @@
     <string name="receiver_push_read_fail">读取本机文件失败：%1$s</string>
     <string name="receiver_stats">📊 统计</string>
     <string name="receiver_stats_line">分辨率 %1$dx%2$d\n推流 %3$d FPS  码率 %4$s\n丢帧 %5$d  解码 %6$d FPS</string>
+    <string name="receiver_stats_latency">延迟 P50 %1$d / P95 %2$d ms\nRTT %3$d ms  抖动 %4$d ms</string>
     <string name="receiver_refresh">🔄 刷新</string>
     <string name="receiver_pair_timeout">连接超时：发送端可能未开始投屏，或网络不通。请点右上角「刷新」重新搜索</string>
     <string name="receiver_crypto_off">加密握手失败，已切换为明文连接</string>
