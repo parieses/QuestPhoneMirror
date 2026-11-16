@@ -81,8 +81,12 @@ class CastService : Service() {
         private const val MAX_PAIR_FAILS = 3
         private const val DEFAULT_BITRATE = 6_000_000
 
-        /** 编码长边上限：手机真实物理分辨率（1440x3200 等）全采全编会吃满 VENC/GPU 并热降频。 */
-        private const val MAX_VIDEO_EDGE = 1280
+        /**
+         * 编码长边上限：全采全编会吃满 VENC/GPU 并热降频，所以降采样；但 1280 对
+         * 1440×3200 只有 0.4×（576×1280），手机 UI 小字在接收端明显发糊。
+         * 1920 是清晰度与编码压力的折中（竖屏 864×1920，0.6×）。
+         */
+        private const val MAX_VIDEO_EDGE = 1920
         /** 视频帧在队列里超过这个时长就不再写入 socket（TCP 写进去就撤不回来，只会堆延迟）。 */
         private const val MAX_FRAME_AGE_MS = 150L
         /** 丢帧后请求关键帧的节流间隔，避免连续请求造成码率尖峰。 */
@@ -868,7 +872,11 @@ class CastService : Service() {
         if (now - lastAdjustAt < 1000) return
         lastAdjustAt = now
         val maxIndex = BITRATE_STEPS.indexOfLast { it <= baseBitrate }.coerceAtLeast(0)
-        val congested = backlogMs > 80 || rttMs > 120 || dropped > 4 || decodedFps in 1..19
+        // decodedFps 低本身不等于拥塞：画面静止时编码器几乎不出帧，接收端自然只解出
+        // 1~2 fps（码率也跌到几十 kb/s）。把它单独当拥塞信号会在静止画面里把码率
+        // 一路降到地板，表现为「越看越糊」。真正能说明链路吃紧的是接收端上报的
+        // 积压 / RTT / 丢帧，这三项在静止画面下都接近 0。
+        val congested = backlogMs > 80 || rttMs > 120 || dropped > 4
         if (congested) {
             goodStreak = 0
             if (adaptiveIndex > 0) {
