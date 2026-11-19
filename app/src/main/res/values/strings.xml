@@ -208,6 +208,9 @@
     <string name="log_info">显示最后 %1$d 行 · 当天日志 %2$d KB</string>
     <string name="log_empty">暂无日志。去连一次投屏，再回到这里就能看到全过程记录。</string>
     <string name="log_share">分享日志</string>
+    <string name="log_copy">复制</string>
+    <string name="log_copied">已复制到剪贴板，可直接粘贴发出</string>
+    <string name="log_copy_fail">复制失败，请长按日志文字手动选择</string>
     <string name="log_share_title">分享诊断日志</string>
     <string name="log_share_empty">当天暂无日志，无可分享</string>
     <string name="log_share_fail">分享失败，请重试</string>

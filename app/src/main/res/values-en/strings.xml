@@ -209,6 +209,9 @@
     <string name="log_info">Showing last %1$d lines · %2$d KB today</string>
     <string name="log_empty">No logs yet. Try a cast session, then come back to see the full trace.</string>
     <string name="log_share">Share log</string>
+    <string name="log_copy">Copy</string>
+    <string name="log_copied">Copied to clipboard, ready to paste</string>
+    <string name="log_copy_fail">Copy failed, long-press the log text to select manually</string>
     <string name="log_share_title">Share diagnostic log</string>
     <string name="log_share_empty">No log today to share</string>
     <string name="log_share_fail">Share failed, please retry</string>

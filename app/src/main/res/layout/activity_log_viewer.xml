@@ -54,6 +54,8 @@
             android:fontFamily="monospace"
             android:padding="10dp"
             android:textColor="#CBD5E1"
+            android:textColorHighlight="#4F46E5"
+            android:textIsSelectable="true"
             android:textSize="11sp" />
     </ScrollView>
 
@@ -69,6 +71,14 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="@string/log_share" />
+
+        <Button
+            android:id="@+id/btnCopy"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/log_copy" />
 
         <Button
             android:id="@+id/btnCrashes"

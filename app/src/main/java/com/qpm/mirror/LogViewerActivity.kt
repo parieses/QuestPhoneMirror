@@ -1,5 +1,8 @@
 package com.qpm.mirror
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -22,6 +25,7 @@ class LogViewerActivity : AppCompatActivity() {
     private lateinit var tvLog: TextView
     private lateinit var tvInfo: TextView
     private lateinit var btnShare: Button
+    private lateinit var btnCopy: Button
     private lateinit var btnCrashes: Button
     private lateinit var btnClear: Button
 
@@ -32,12 +36,14 @@ class LogViewerActivity : AppCompatActivity() {
         tvLog = findViewById(R.id.tvLog)
         tvInfo = findViewById(R.id.tvInfo)
         btnShare = findViewById(R.id.btnShare)
+        btnCopy = findViewById(R.id.btnCopy)
         btnCrashes = findViewById(R.id.btnCrashes)
         btnClear = findViewById(R.id.btnClear)
 
         refresh()
 
         btnShare.setOnClickListener { shareCurrent() }
+        btnCopy.setOnClickListener { copyAll() }
         btnCrashes.setOnClickListener { showCrashes() }
         btnClear.setOnClickListener {
             AlertDialog.Builder(this, R.style.Theme_QPM_Dialog)
@@ -68,6 +74,24 @@ class LogViewerActivity : AppCompatActivity() {
             val scroll = findViewById<android.widget.ScrollView>(R.id.scrollLog)
             scroll.fullScroll(android.view.View.FOCUS_DOWN)
         }
+    }
+
+    /** 一键复制屏幕上显示的日志（所见即所得），便于直接粘贴到聊天工具发出来。 */
+    private fun copyAll() {
+        val text = tvLog.text?.toString()
+        if (text.isNullOrEmpty()) {
+            toast(getString(R.string.log_share_empty))
+            return
+        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (cm == null) {
+            toast(getString(R.string.log_copy_fail))
+            return
+        }
+        val ok = runCatching {
+            cm.setPrimaryClip(ClipData.newPlainText(getString(R.string.log_title), text))
+        }.isSuccess
+        toast(getString(if (ok) R.string.log_copied else R.string.log_copy_fail))
     }
 
     private fun shareCurrent() {
