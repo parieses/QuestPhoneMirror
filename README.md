@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.19-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.20-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -175,6 +175,19 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 * * *
 
 ## 📝 更新日志
+
+### v0.20
+
+**改进**
+- **编码长边提升到 1920，接收端更清晰**：发送端 H.264 硬编的长边由 1280 提到 1920（码率档位同步适配），横屏 / 高分辨率手机投到 Quest 时画面细节明显改善
+- **延迟统计**：新增端到端延迟指标（P50 / P95），接收端统计浮窗可实时查看，便于判断网络与编解码开销
+- **诊断日志可复制**：日志页文本开启长按选择，并新增「复制」按钮一键把日志放进剪贴板——设备无 adb 时更容易把排障日志发出来
+
+**修复**
+- **PendingFrame 移出 inner class**：修复一处 Kotlin 编译失败，保证 CI 构建通过
+- **补齐英文文案**：日志页复制相关文案与 `receiver_decoder_clamped` / `receiver_decoder_fail_all` 的中英文对齐
+
+* * *
 
 ### v0.19
 
@@ -393,8 +406,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.19        # 版本号唯一来源就是 git tag
-git push origin v0.19
+git tag v0.20        # 版本号唯一来源就是 git tag
+git push origin v0.20
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
