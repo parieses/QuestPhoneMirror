@@ -83,6 +83,8 @@ class QpmApp : Application() {
             sb.append("time: ").append(FMT.format(Date(e.timestamp))).append('\n')
             sb.append("reason: ").append(reason).append(" (").append(e.reason).append(")\n")
             sb.append("status: ").append(e.status).append('\n')
+            // SIGNALED 的 status 就是信号编号，直接译成名字，省得每次人工换算
+            if (e.reason == 2) sb.append("signal: ").append(signalName(e.status)).append('\n')
             sb.append("importance: ").append(e.importance).append('\n')
             sb.append("process: ").append(e.processName ?: "").append('\n')
             sb.append("description: ").append(e.description ?: "").append('\n')
@@ -120,6 +122,24 @@ class QpmApp : Application() {
         12 -> "DEPENDENCY_DIED"
         13 -> "OTHER"
         else -> "REASON_$reason"
+    }
+
+    /** 终止进程的信号编号 → 可读名（SIGNALED 时 status 字段即信号号）。 */
+    private fun signalName(sig: Int): String = when (sig) {
+        1 -> "SIGHUP"
+        2 -> "SIGINT"
+        3 -> "SIGQUIT"
+        4 -> "SIGILL"
+        5 -> "SIGTRAP"
+        6 -> "SIGABRT"
+        7 -> "SIGBUS"
+        8 -> "SIGFPE"
+        9 -> "SIGKILL"
+        11 -> "SIGSEGV"
+        13 -> "SIGPIPE"
+        14 -> "SIGALRM"
+        15 -> "SIGTERM"
+        else -> "SIG_$sig"
     }
 
     private companion object {

@@ -146,7 +146,14 @@ class H264Decoder(
             codec.start()
             QpmLog.i(TAG, "解码器已启动 ${videoW}x${videoH}（等待 SPS/PPS 与首个关键帧）")
         } catch (e: Exception) {
-            QpmLog.e(TAG, "初始化失败: ${e.message}")
+            // message 常常是空的（configure 失败时尤其如此），必须把类型和 CodecException
+            // 的 diagnosticInfo 一起打出来，否则日志里只剩「初始化失败: 」无法定位
+            val extra = if (e is MediaCodec.CodecException) {
+                " | diag=${runCatching { e.diagnosticInfo }.getOrNull()}" +
+                    " recoverable=${runCatching { e.isRecoverable }.getOrNull()}" +
+                    " transient=${runCatching { e.isTransient }.getOrNull()}"
+            } else ""
+            QpmLog.e(TAG, "初始化失败 ${videoW}x$videoH: ${e.javaClass.simpleName}: ${e.message}$extra")
             alive = false
             runCatching { codec.release() }
             throw e

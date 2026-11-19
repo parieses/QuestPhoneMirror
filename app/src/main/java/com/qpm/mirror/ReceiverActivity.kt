@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.media.MediaCodec
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.net.Uri
@@ -58,6 +59,12 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     private lateinit var statsView: TextView
 
     private var decoder: H264Decoder? = null
+    /**
+     * 上一次已处理过的目标码流尺寸（-1 = 无）。SCREEN_INFO 重复到达时不再重建：
+     * 反复「停旧解码器 → 建新解码器」既丢帧，失败的 configure 还可能把 Surface 弄坏。
+     */
+    private var lastTargetW = -1
+    private var lastTargetH = -1
     private var client: MirrorClient? = null
     private var mapper: TouchMapper? = null
 
@@ -168,6 +175,18 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         QpmLog.i(TAG, "surfaceCreated：Surface 就绪，初始化解码器")
         destroyed = false
         uiHandler.removeCallbacks(pairTimeoutRunnable)
+        // 切后台再回来会重建 Surface，旧解码器仍挂在旧 Surface 上：必须先释放。
+        // 一个 Surface 的 BufferQueue 只有单 producer 槽位，两个 MediaCodec 同时
+        // configure 同一个 Surface 会 configure 失败 / 旧解码器渲染时 native abort。
+        val stale = decoder
+        if (stale != null) {
+            QpmLog.i(TAG, "surfaceCreated：释放挂在旧 Surface 上的解码器 ${stale.videoW}x${stale.videoH}")
+            client?.decoder = null
+            decoder = null
+            runCatching { stale.stop() }
+        }
+        lastTargetW = -1
+        lastTargetH = -1
         // 用最近一次已知的真实尺寸配置（候选链兜底，见 buildDecoder）：
         // 写死 1920x1080 或直接拿超限尺寸硬配，都会在部分机型上出问题
         val built = buildDecoder(holder.surface, lastVideoW, lastVideoH)
@@ -641,37 +660,68 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
      * 真实尺寸 configure 也可能直接失败：1440x3200 这类 20:9 竖屏的高度超出多数机型
      * AVC 硬解上限（c2 常见 2048），configure 抛 IllegalArgumentException。旧实现此时
      * 只记日志 return，留下 1080p 旧解码器去解 3200 高的码流——正是 v0.17 前「连上就
-     * 闪退」的 native 崩溃场景。现按候选链逐个试创建，全部失败才放弃并提示。
+     * 闪退」的 native 崩溃场景。现按候选链逐个试创建，全部失败回退到上一个可用尺寸。
+     *
+     * **换解码器必须「先停旧、再建新」**：同一个 Surface 只能挂一个 MediaCodec，
+     * 旧实例还在时 configure 新实例会失败，且旧实例继续渲染会 native abort（SIGABRT）。
      */
     private fun ensureDecoderSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
         // 可能从 MirrorClient 收帧线程调用：页面/Surface 已销毁时不再碰解码器
         if (destroyed || isFinishing || isDestroyed) return
+        val cur = decoder
+        // 回退尺寸要在覆盖 lastVideoW/H 之前取，否则回退目标会变成刚到达的新尺寸
+        val prevW = cur?.videoW ?: DEFAULT_W
+        val prevH = cur?.videoH ?: DEFAULT_H
         lastVideoW = w
         lastVideoH = h
-        val cur = decoder
         if (cur != null && cur.videoW == w && cur.videoH == h) return
+        // 同一目标尺寸已经处理过（成功降级或失败回退）就直接复用当前解码器：
+        // 重复重建只会白丢几帧，而每次失败的 configure 都在折腾同一个 Surface
+        if (cur != null && lastTargetW == w && lastTargetH == h) return
         val surface = runCatching { surfaceView.holder.surface }.getOrNull()
         if (surface == null || !surface.isValid) {
             QpmLog.w(TAG, "按 ${w}x$h 重建解码器跳过：Surface 无效")
             return
         }
-        val built = buildDecoder(surface, w, h)
+        lastTargetW = w
+        lastTargetH = h
+
+        // 关键顺序：先停旧解码器、空出 Surface，再建新解码器。
+        //
+        // 一个 Surface 的 BufferQueue 只有一个 producer 槽位。旧解码器还挂在上面时
+        // 去 configure 新解码器，configure 直接失败（异常 message 常为空，真正原因在
+        // diagnosticInfo），而且旧解码器随后的 releaseOutputBuffer(render=true) 会在
+        // native 层 abort → SIGABRT，Java 层没有任何堆栈，进程当场消失
+        // （crashes/exit-SIGNALED-*.log，status=6）。v0.22 及以前「一降到候选尺寸
+        // 就闪退」正是这个顺序问题，不是尺寸本身不被支持。
+        client?.decoder = null
+        decoder = null
+        runCatching { cur?.stop() }
+
+        var built = buildDecoder(surface, w, h)
         if (built == null) {
-            QpmLog.e(TAG, "所有候选尺寸均无法创建解码器（目标 ${w}x$h）")
+            // 全部候选尺寸都建不起来：把「刚才那个已知能用」的尺寸重建回来，
+            // 至少让画面继续，而不是留下 null 解码器永久黑屏
+            QpmLog.e(TAG, "所有候选尺寸均无法创建解码器（目标 ${w}x$h），回退 ${prevW}x$prevH")
+            built = buildDecoder(surface, prevW, prevH)
+        }
+        if (built == null) {
+            // 回退也失败：允许下一次 SCREEN_INFO 再试一次（清掉去重标记）
+            QpmLog.e(TAG, "解码器重建与回退均失败，等待后续 SCREEN_INFO 重试")
+            lastTargetW = -1
+            lastTargetH = -1
             runUi { hint.text = getString(R.string.receiver_decoder_fail_all, w, h) }
             return
         }
         val (dec, used) = built
-        // 先换引用再停旧实例：网络线程只会喂给当前实例，在途帧由 feed() 的 alive 守卫兜住
         decoder = dec
         client?.decoder = dec
-        runCatching { cur?.stop() }
         if (used.first != w || used.second != h) {
             QpmLog.w(TAG, "按 ${w}x$h 重建解码器失败，已降级 ${used.first}x${used.second} 兼容投屏")
             runUi { hint.text = getString(R.string.receiver_decoder_clamped, w, h, used.first, used.second) }
         } else {
-            QpmLog.i(TAG, "解码器已按 ${w}x$h 重建（旧 ${cur?.videoW}x${cur?.videoH}）")
+            QpmLog.i(TAG, "解码器已按 ${w}x$h 重建（旧 ${prevW}x$prevH）")
         }
     }
 
@@ -693,12 +743,25 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
                     videoH = ch
                 )
             } catch (e: Exception) {
-                QpmLog.w(TAG, "创建 ${cw}x$ch 解码器失败: ${e.message}")
+                QpmLog.w(TAG, "创建 ${cw}x$ch 解码器失败: ${describeCodecError(e)}")
                 null
             } ?: continue
             return dec to (cw to ch)
         }
         return null
+    }
+
+    /**
+     * MediaCodec 的失败原因大多不在 message 里（configure 失败时常见 message 为空），
+     * 真正线索在 CodecException.diagnosticInfo 与 recoverable/transient 标志上。
+     */
+    private fun describeCodecError(e: Throwable): String {
+        val base = "${e.javaClass.simpleName}: ${e.message}"
+        if (e !is MediaCodec.CodecException) return base
+        val diag = runCatching { e.diagnosticInfo }.getOrNull()
+        val rec = runCatching { e.isRecoverable }.getOrNull()
+        val tra = runCatching { e.isTransient }.getOrNull()
+        return "$base | diag=$diag recoverable=$rec transient=$tra"
     }
 
     /**
@@ -786,15 +849,19 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         private const val TAG = "ReceiverActivity"
         private const val REQ_PUSH = 1001
 
+        /** 没拿到 SCREEN_INFO 时的默认 configure 尺寸（也是「已知能用」的回退目标）。 */
+        private const val DEFAULT_W = 1920
+        private const val DEFAULT_H = 1080
+
         /**
          * 最近一次已知的发送端画面尺寸：进程内记住，重建解码器/返回界面时直接复用，
          * 避免又用默认 1920x1080 去解一个分辨率完全不同的码流。
          */
         @Volatile
-        private var lastVideoW = 1920
+        private var lastVideoW = DEFAULT_W
 
         @Volatile
-        private var lastVideoH = 1080
+        private var lastVideoH = DEFAULT_H
 
         /** AVC 硬解最大宽高缓存（进程内查一次即可，能力不会变）。 */
         @Volatile

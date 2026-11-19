@@ -53,6 +53,8 @@ class MirrorClient(
      * 解码器可热替换：发送端分辨率一旦变化，接收端会按新尺寸重建解码器，
      * 网络线程直接喂给新实例（旧实例立即停掉）。用写死的尺寸配置解码器，
      * 部分机型的硬解在收到尺寸不符的码流时会在 native 层崩溃。
+     *
+     * 重建期间会被置 null（Surface 上不能同时挂两个 MediaCodec），feed 处判空跳过。
      */
     @Volatile
     var decoder: H264Decoder? = decoder
