@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.22-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.23-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -175,6 +175,19 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 * * *
 
 ## 📝 更新日志
+
+### v0.23
+
+**修复**
+- **修复「刚连上就闪退」（SIGABRT / status 6）**：接收端按新尺寸换解码器时，旧解码器仍挂在同一个 Surface 上，新解码器 configure 必然失败；旧解码器随后的渲染会直接触发 native abort，进程无声消失。改为**先停旧、再建新**，先空出 Surface 再 configure
+- **换解码器失败不再黑屏**：候选尺寸全部失败时自动回退到上一个可用尺寸，而不是留下空解码器
+- **重复 SCREEN_INFO 不再反复重建**：同一目标尺寸只处理一次，避免重复丢帧与反复折腾 Surface
+- **恢复界面时释放旧解码器**：Surface 重建后先释放挂在旧 Surface 上的解码器，避免两个 MediaCodec 抢同一个 Surface
+
+**改进**
+- **崩溃日志更可读**：`exit-*.log` 增加 `signal: SIGABRT/SIGSEGV…` 明文；解码器创建失败日志补充异常类型与 `diagnosticInfo`（configure 失败时 message 常为空）
+
+* * *
 
 ### v0.22
 
@@ -420,8 +433,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.22        # 版本号唯一来源就是 git tag
-git push origin v0.22
+git tag v0.23        # 版本号唯一来源就是 git tag
+git push origin v0.23
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
