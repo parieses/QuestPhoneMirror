@@ -5,7 +5,7 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.23-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.24-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
 [![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
@@ -175,6 +175,20 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 * * *
 
 ## 📝 更新日志
+
+### v0.24
+
+**修复**
+- **连上后画面停在第一帧 / 随后闪退**：发送端在链路吃不住码率时「丢帧 → 立刻要一个大 IDR → 更大帧把发送缓冲堵死 → 再丢帧」形成死循环，接收端每秒只收到零点几帧，画面冻结，几秒后进程被 native abort（SIGABRT）。现在帧过期只做一件事——**立刻降一档码率**；控制帧（配对结果/PONG/统计）改为独立队列优先发送，不再被大帧卡住读线程，自适应码率才真正生效
+- **自适应码率下限下探到 0.6Mbps**：原来最低只能降到 2Mbps，弱 Wi-Fi 上仍然带不动 864×1920 的码流；新增 0.6 / 1Mbps 两档
+- **关键帧间隔 1s → 2s**：单帧 IDR 在 864×1920 下可达 200~280KB，每秒一个等于拿 2Mbps 预算专门发关键帧，是拥塞的主要来源
+- **发送端帧池引用计数改为「先 retain 再入队」**：原顺序下写线程可能先写完并释放到 0，编码线程随即复用同一个槽覆盖内容，发出去的是半新半旧的拼接帧（损坏的 H.264 NAL 会让接收端硬解 native 崩溃）
+- **`MediaCodec error 1101`（ERROR_RECLAIMED，硬解被系统回收）导致闪退**：原代码只弹提示、不释放已终止的 codec，系统宽限期一到直接杀进程（无堆栈 SIGABRT）。现在出错即释放并按已知尺寸自动重建、重新握手取关键帧；切到后台也主动释放硬解，避免被系统资源管理器回收。连续失败 3 次才停止重试
+
+**新增**
+- **画面停更自动恢复**：接收端连上后连续 3s 收不到视频帧 → 显示「画面停更，正在尝试恢复」并向发送端请求关键帧（新增 `KEY_REQ` 帧，旧版发送端会忽略，不影响兼容）；10s 仍不动则自动重连一次。为此关键帧间隔放宽到 2s 也不会拖慢恢复
+
+* * *
 
 ### v0.23
 
@@ -433,8 +447,8 @@ app/        单 App 双角色
 ### 版本发布
 
 ```bash
-git tag v0.23        # 版本号唯一来源就是 git tag
-git push origin v0.23
+git tag v0.24        # 版本号唯一来源就是 git tag
+git push origin v0.24
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
