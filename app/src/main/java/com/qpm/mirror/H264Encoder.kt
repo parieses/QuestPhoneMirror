@@ -27,7 +27,8 @@ class H264Encoder(
         // 不同设备放 SPS/PPS 的位置不一：有的在 csd-0/csd-1，有的在 CODEC_CONFIG
         // output buffer，有的两者都没有、而是内联在 IDR 帧里。这里两条来源都缓存，
         // 谁有算谁的。接收端只要在每个 IDR 前拿到 SPS/PPS 即可初始化解码器，
-        // 与“何时连上”无关（KEY_I_FRAME_INTERVAL=1，最多 1 秒必有一个 IDR）。
+        // 与“何时连上”无关（KEY_I_FRAME_INTERVAL=2，最多 2 秒必有一个 IDR；
+        //  需要更快恢复时由接收端发 KEY_REQ 立刻插一个 IDR）。
         private var spsPps: ByteArray? = null
         private val cached = mutableSetOf<String>()
 
@@ -159,7 +160,10 @@ class H264Encoder(
                 // 画质档位由调用方给定（默认 1080p 约 6Mbps），网络差可调低
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, 30)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                // 关键帧间隔 2s（原 1s）：裸 IDR 在 864x1920 下能到 200~280KB，1s 一个等于
+                // 拿 2Mbps 预算专门发关键帧，弱 Wi-Fi 上必然把链路堵死。丢帧/停更时接收端
+                // 会自己发 KEY_REQ 要 IDR，所以不必靠缩短间隔来保证恢复速度。
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
                 // 实时投屏参数：恒定码率避免画面突变时码率尖峰打爆 Wi-Fi；关 B 帧与
                 // lookahead 消掉编码内 2~4 帧排队（约 60~130ms）；realtime 优先级 +
                 // operating-rate 防止系统把 VENC 调度到低频后帧率上不去。

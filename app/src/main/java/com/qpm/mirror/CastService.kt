@@ -89,8 +89,9 @@ class CastService : Service() {
         private const val MAX_VIDEO_EDGE = 1920
         /** 视频帧在队列里超过这个时长就不再写入 socket（TCP 写进去就撤不回来，只会堆延迟）。 */
         private const val MAX_FRAME_AGE_MS = 150L
-        /** 丢帧后请求关键帧的节流间隔，避免连续请求造成码率尖峰。 */
-        private const val KEY_REQUEST_INTERVAL_MS = 500L
+
+        /** 控制帧队列深度：STATS/PONG 是每秒级，64 条足够吸收一次大帧写阻塞。 */
+        private const val CTRL_QUEUE_DEPTH = 64
 
         /**
          * socket 发送缓冲上限。默认值常有几百 KB，拥塞时内核里排队的旧帧全部「撤不回」，
@@ -101,8 +102,12 @@ class CastService : Service() {
         /** 发送端 wire 帧池槽数：足够覆盖队列深度 3 × 常见接收端数量，耗尽时退回普通分配。 */
         private const val FRAME_POOL_SLOTS = 8
 
-        /** 自适应码率档位（bps）；上限由用户在画质档里选定，只在此范围内升降。 */
-        private val BITRATE_STEPS = intArrayOf(2_000_000, 4_000_000, 6_000_000, 10_000_000)
+        /**
+         * 自适应码率档位（bps）；上限由用户在画质档里选定，只在此范围内升降。
+         * 低位几档是给「Wi-Fi 实际吞吐只有几百 kbps」准备的：1920 长边 + 6Mbps 目标
+         * 一旦遇到这种链路，一个 IDR 就要几 MB 秒才能发完，必须能降到 0.6Mbps 才活得下来。
+         */
+        private val BITRATE_STEPS = intArrayOf(600_000, 1_000_000, 2_000_000, 4_000_000, 6_000_000, 10_000_000)
 
         /** 防息屏原值的持久化键与兜底值（原值未知时恢复成 1 分钟）。 */
         private const val KEY_ORIGINAL_TIMEOUT = "original_screen_off_timeout"
@@ -190,7 +195,7 @@ class CastService : Service() {
         if (text.isEmpty()) return
         val frame = Proto.clipboard(text)
         // 只发给已配对接收端：未配对连接不应收到剪贴板内容
-        instanceRef?.clients?.forEach { if (it.paired) it.sendReliable(frame) }
+        instanceRef?.clients?.forEach { if (it.paired) it.sendControl(frame) }
     }
 
         /**
@@ -261,6 +266,9 @@ class CastService : Service() {
     private var adaptiveIndex: Int = 2
     private var goodStreak: Int = 0
     private var lastAdjustAt: Long = 0L
+
+    /** 写线程因帧过期直接降档的节流时间戳（见 stepDownBitrate）。 */
+    private var lastStepDownAt: Long = 0L
     private val framePool = WireFramePool(FRAME_POOL_SLOTS)
     private var prevScreenOffTimeout: Int? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -654,7 +662,7 @@ class CastService : Service() {
         // 降采样后的码流尺寸（接收端按它 configure 解码器）——两者现在不再相等。
         val m = realMetrics()
         val info = Proto.screenInfo(m.widthPixels, m.heightPixels, m.densityDpi, w, h)
-        clients.forEach { it.sendReliable(info) }
+        clients.forEach { it.sendControl(info) }
 
         // ④ 新流水线已接管，停旧编码器（迟到的回调由代际守卫丢弃）
         runCatching { old.stop() }
@@ -694,7 +702,7 @@ class CastService : Service() {
                     val bitrate = (bytes * 8).toInt() // bits per second
                     // 统计浮窗显示实际推流尺寸（降采样后），不再是手机物理分辨率
                     val stats = Proto.stats(frames.toInt(), bitrate, videoW, videoH, dropped.toInt())
-                    clients.forEach { if (it.paired) it.sendReliable(stats) }
+                    clients.forEach { if (it.paired) it.sendControl(stats) }
                 } catch (e: Exception) {
                     QpmLog.w(TAG, "统计广播异常: ${e.message}")
                 }
@@ -869,26 +877,46 @@ class CastService : Service() {
      */
     private fun onReceiverFeedback(decodedFps: Int, backlogMs: Int, dropped: Int, rttMs: Int) {
         val now = SystemClock.elapsedRealtime()
-        if (now - lastAdjustAt < 1000) return
-        lastAdjustAt = now
-        val maxIndex = BITRATE_STEPS.indexOfLast { it <= baseBitrate }.coerceAtLeast(0)
-        // decodedFps 低本身不等于拥塞：画面静止时编码器几乎不出帧，接收端自然只解出
-        // 1~2 fps（码率也跌到几十 kb/s）。把它单独当拥塞信号会在静止画面里把码率
-        // 一路降到地板，表现为「越看越糊」。真正能说明链路吃紧的是接收端上报的
-        // 积压 / RTT / 丢帧，这三项在静止画面下都接近 0。
-        val congested = backlogMs > 80 || rttMs > 120 || dropped > 4
-        if (congested) {
+        synchronized(this) {
+            if (now - lastAdjustAt < 1000) return
+            lastAdjustAt = now
+            val maxIndex = BITRATE_STEPS.indexOfLast { it <= baseBitrate }.coerceAtLeast(0)
+            // decodedFps 低本身不等于拥塞：画面静止时编码器几乎不出帧，接收端自然只解出
+            // 1~2 fps（码率也跌到几十 kb/s）。把它单独当拥塞信号会在静止画面里把码率
+            // 一路降到地板，表现为「越看越糊」。真正能说明链路吃紧的是接收端上报的
+            // 积压 / RTT / 丢帧，这三项在静止画面下都接近 0。
+            val congested = backlogMs > 80 || rttMs > 120 || dropped > 4
+            if (congested) {
+                goodStreak = 0
+                if (adaptiveIndex > 0) {
+                    adaptiveIndex--
+                    applyAdaptiveBitrate()
+                }
+            } else {
+                goodStreak++
+                if (goodStreak >= 3 && adaptiveIndex < maxIndex) {
+                    adaptiveIndex++
+                    goodStreak = 0
+                    applyAdaptiveBitrate()
+                }
+            }
+        }
+    }
+
+    /**
+     * 写线程发现「帧在队列里放过期了」时直接降档：这类拥塞不需要等接收端回报，
+     * 而且 FEEDBACK 本身也可能正被堵在大帧后面。节流 700ms，避免一次拥塞连降好几档。
+     */
+    private fun stepDownBitrate() {
+        val now = SystemClock.elapsedRealtime()
+        synchronized(this) {
+            if (now - lastStepDownAt < 700) return
+            lastStepDownAt = now
             goodStreak = 0
             if (adaptiveIndex > 0) {
                 adaptiveIndex--
                 applyAdaptiveBitrate()
-            }
-        } else {
-            goodStreak++
-            if (goodStreak >= 3 && adaptiveIndex < maxIndex) {
-                adaptiveIndex++
-                goodStreak = 0
-                applyAdaptiveBitrate()
+                QpmLog.w(TAG, "链路拥塞，码率降到 ${currentBitrate / 1000}kbps")
             }
         }
     }
@@ -934,12 +962,22 @@ class CastService : Service() {
     ) {
         private val queue = LinkedBlockingQueue<PendingFrame>(QUEUE_DEPTH)
         /**
-         * 公平锁：控制帧（sendReliable）与视频帧（writeLoop）共用一把锁串行写 socket，
+         * 控制帧（PONG/STATS/配对结果/尺寸帧）专用队列：小、时效性强、必须优先于视频发出。
+         * **绝不能直接在 readLoop 里写 socket**：一帧 200KB+ 的 IDR 卡在 64KB 发送缓冲里时，
+         * write() 会阻塞数秒，readLoop 被一起拖住 → 收不到接收端的 FEEDBACK → 自适应码率
+         * 永远不降档 → 大帧持续堵死链路，画面永久停在第一帧（v0.23 前的实际故障）。
+         *
+         * 分两条：`mustSend` 必须送达（配对结果/文件数据），满了就阻塞调用方（文件线程可接受）；
+         * `droppable` 可丢（STATS/PONG/尺寸帧），满了丢最旧的，绝不拖住读线程。
+         */
+        private val mustSend = java.util.concurrent.LinkedBlockingQueue<ByteArray>(CTRL_QUEUE_DEPTH)
+        private val droppable = java.util.concurrent.LinkedBlockingQueue<ByteArray>(CTRL_QUEUE_DEPTH)
+        /**
+         * 公平锁：控制帧与视频帧共用一把锁串行写 socket（加密计数器顺序必须与 wire 顺序一致），
          * 公平模式下等待中的控制帧不会被连续视频写无限插队。
          */
         private val writeLock = ReentrantLock(true)
         @Volatile private var closed = false
-        private var lastKeyRequestAt = 0L
 
         /** 加密通道：本端为发送端，发出方向为 DIR_PHONE。握手前/失败回落时自动透传。 */
         private val channel = SecureChannel(Crypto.DIR_PHONE)
@@ -978,6 +1016,10 @@ class CastService : Service() {
          */
         fun offer(wire: ByteArray, len: Int, critical: Boolean, slot: WireFramePool.Slot?): Boolean {
             if (closed || !paired) return false
+            // 先 retain 再入队：writeLoop 若在 retain 之前就把这帧写完并 release 到 0，
+            // 编码线程会立刻把槽当空闲复用、覆盖数组内容，写出去的就是半新半旧的拼接数据
+            // （损坏的 H.264 NAL 会让接收端硬解在 native 层直接 abort，日志里只有 SIGABRT）。
+            slot?.retain()
             val f = PendingFrame(wire, len, SystemClock.elapsedRealtime(), critical, slot)
             var lost = false
             if (!queue.offer(f)) {
@@ -987,22 +1029,35 @@ class CastService : Service() {
                 if (victim != null && queue.remove(victim)) {
                     victim.slot?.release()
                 }
-                queue.offer(f)
+                if (!queue.offer(f)) {
+                    // 挤掉一帧后仍塞不进（writeLoop 正在取）：这一帧放弃，归还自己那份引用
+                    slot?.release()
+                    return false
+                }
                 lost = true
             }
-            slot?.retain()
             return !lost
         }
 
-        /** 可靠发送：控制结果/文件数据必须到达，武装后自动 AES-GCM 封装帧体。 */
+        /**
+         * 可靠发送：配对结果 / 文件数据 / 错误提示等必须送达的帧。只入队不写 socket，
+         * 队列满时阻塞调用方（文件下发线程可接受背压），绝不阻塞 readLoop。
+         * 加密放在写线程做——计数器自增顺序必须与实际 wire 顺序一致。
+         */
         fun sendReliable(bytes: ByteArray) {
             if (closed) return
-            try {
-                writeLock.withLock { socket.getOutputStream().write(channel.seal(bytes)) }
-            } catch (e: Exception) {
-                // 带异常类型：对端进程消失时不同 ROM 抛的异常消息可能为 null，只有类型可辨
-                QpmLog.w(TAG, "sendReliable 失败: ${e.javaClass.simpleName}: ${e.message}")
-                close()
+            runCatching { mustSend.put(bytes) }
+        }
+
+        /**
+         * 可丢的控制帧：STATS / PONG / 尺寸帧。队列满就丢掉最旧的，
+         * 保证读线程和统计线程在任何拥塞下都不会被卡住（旧帧本来也没用了）。
+         */
+        fun sendControl(bytes: ByteArray) {
+            if (closed) return
+            if (!droppable.offer(bytes)) {
+                droppable.poll()
+                if (!droppable.offer(bytes)) return
             }
         }
 
@@ -1010,15 +1065,31 @@ class CastService : Service() {
             try {
                 val out = socket.getOutputStream()
                 while (!closed) {
+                    // 先清可靠帧 / 控制帧：配对结果与尺寸帧必须抢在首帧视频之前到达，
+                    // 而且它们小、时效性强，不能排在几百 KB 的视频帧后面等
+                    val must = mustSend.poll()
+                    if (must != null) {
+                        writeLock.withLock { out.write(channel.seal(must)) }
+                        continue
+                    }
+                    val ctrl = droppable.poll()
+                    if (ctrl != null) {
+                        writeLock.withLock { out.write(channel.seal(ctrl)) }
+                        continue
+                    }
                     // 用 poll 而非 take：close() 后若队列已空，take() 会永久挂起导致线程泄漏
-                    val frame = queue.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                    val frame = queue.poll(50, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
                     // TCP 一旦写入就撤不回来：过期帧再发出去只会把延迟堆到后面每一帧上。
                     // 关键帧/尺寸帧例外——丢了要等下一个 IDR，花屏比多几十 ms 更难受。
                     val age = SystemClock.elapsedRealtime() - frame.atMs
                     if (age > MAX_FRAME_AGE_MS && !frame.critical) {
                         statDropped.incrementAndGet()
-                        requestKeyFrameThrottled()
                         frame.slot?.release()
+                        // 帧过期 = 链路带不动当前码率。这里绝不能去要关键帧：IDR 比 P 帧大得多，
+                        // 只会把 64KB 发送缓冲堵得更死。旧版正是「丢帧 → 要 IDR → 更堵 → 再丢」
+                        // 的死循环，表现为连上后画面停在第一帧、几秒后进程被 native 打死。
+                        // 正确反应是立刻降一档码率，让下一个 GOP 真正来得及发出去。
+                        stepDownBitrate()
                         continue
                     }
                     try {
@@ -1037,14 +1108,6 @@ class CastService : Service() {
                 if (!closed) QpmLog.w(TAG, "发送线程异常退出: ${e.javaClass.simpleName}: ${e.message}")
                 close()
             }
-        }
-
-        /** 丢了 P 帧后参考链已断，尽快要一个 IDR 恢复，别让花屏拖满一个 GOP。 */
-        private fun requestKeyFrameThrottled() {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastKeyRequestAt < KEY_REQUEST_INTERVAL_MS) return
-            lastKeyRequestAt = now
-            runCatching { encoder?.requestKeyFrame() }
         }
 
         private fun readLoop() {
@@ -1143,9 +1206,11 @@ class CastService : Service() {
                         Type.CLIPBOARD -> if (paired) handleClipboardSync(Decoders.clipboardOf(frame))
 
                         // 延迟探针：原样回带 t1，接收端用本机时钟算 RTT（不要求时钟同步）
-                        Type.PING -> sendReliable(
+                        Type.PING -> sendControl(
                             Proto.pong(Decoders.pingOf(frame), SystemClock.elapsedRealtime().toInt())
                         )
+                        // 接收端发现画面停更，主动要一个 IDR：只补关键帧，不动码率
+                        Type.KEY_REQ -> if (paired) runCatching { encoder?.requestKeyFrame() }
                         // 接收端反馈：驱动自适应码率
                         Type.FEEDBACK -> if (paired) {
                             val fb = Decoders.feedbackOf(frame)

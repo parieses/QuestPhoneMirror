@@ -62,6 +62,34 @@ class MirrorClient(
     @Volatile private var phoneScreenW = 0
     @Volatile private var phoneScreenH = 0
 
+    /** 最近一次收到视频帧的 elapsedRealtime（0 = 本次连接还没收到过）。供「画面停更」看门狗判断。 */
+    @Volatile private var lastVideoAtMs = 0L
+
+    /** 本次连接是否已收到过视频帧、以及距上一帧已经多久（毫秒）。 */
+    fun hasVideo(): Boolean = lastVideoAtMs != 0L
+
+    fun videoGapMs(): Long {
+        val t = lastVideoAtMs
+        return if (t == 0L) 0L else android.os.SystemClock.elapsedRealtime() - t
+    }
+
+    /**
+     * 请发送端立刻补一个关键帧。链路拥塞时发送端可能一直在丢 P 帧，
+     * 接收端的参考链已经断了、画面停更，补一个 IDR 就能恢复（不必重连）。
+     * 旧版发送端忽略该帧类型，不会因此断连。
+     *
+     * 必须在后台线程写：调用方是主线程上的看门狗，而 socket 写在对端不收时
+     * 会阻塞（停更场景下正好如此），放到主线程会直接 ANR。
+     */
+    fun requestKeyFrame() {
+        runCatching {
+            Thread({ writeCipher(Proto.keyRequest()) }, "qpm-key-req").apply {
+                isDaemon = true
+                start()
+            }
+        }
+    }
+
     /** 加密通道：本端为接收端，发出方向为 DIR_MIRROR。握手前/失败回落时自动透传。 */
     private val channel = SecureChannel(Crypto.DIR_MIRROR)
 
@@ -256,6 +284,7 @@ class MirrorClient(
                 when (frame.type) {
                     Type.KEY_EXCHANGE -> { /* 已在校验握手处理，主循环不再出现 */ }
                     Type.VIDEO_FRAME -> {
+                        lastVideoAtMs = SystemClock.elapsedRealtime()
                         // 到达时刻 - 发送时刻含固定时钟偏差，取窗口内差值即可消掉偏差
                         meter.onFrame(Decoders.videoSentAt(frame), SystemClock.elapsedRealtime().toInt())
                         if (streamReady) decoder?.feed(frame.body)

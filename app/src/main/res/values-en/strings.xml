@@ -153,9 +153,10 @@
     <string name="receiver_need_code">Pair code required</string>
     <string name="receiver_need_code_hint">Multiple senders detected on the LAN. Enter the 6-digit code shown on the target sender</string>
     <string name="receiver_decoder_fail">Decoder init failed</string>
-    <string name="receiver_decoder_error">Decode error: %1$s. Reopen to retry</string>
+    <string name="receiver_decoder_error">Decode error (%1$s), recovering automatically…</string>
     <string name="receiver_decoder_clamped">This device cannot hardware-decode %1$dx%2$d; using %3$dx%4$d instead. Lower the sender resolution if the picture looks wrong</string>
     <string name="receiver_decoder_fail_all">This device cannot decode %1$dx%2$d video. Use another receiver or lower the sender resolution</string>
+    <string name="receiver_stall_recovering">Picture stalled, recovering…</string>
     <string name="receiver_h264_unsupported">H.264 hardware decode not supported</string>
     <string name="receiver_device_name">Receiver</string>
     <string name="receiver_clip_copied">Copied to this device\'s clipboard</string>

@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
@@ -105,6 +106,21 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
     /** 最近一次配对使用的码（空串/未配对 = 免密直连），文件浏览器复用。 */
     private var lastPairCode: String? = null
 
+    /** 画面停更看门狗：连上后连续几秒收不到视频帧 → 先要关键帧，再不行就强制重连。 */
+    private var lastKeyReqAt = 0L
+    private var lastStallReconnectAt = 0L
+    private var stallHintShown = false
+
+    /** 解码器出错（含 1101 资源被回收）后的重建重试计数与任务。 */
+    private var decoderRecoveryAttempts = 0
+    private val decoderRecoveryRunnable = Runnable { recoverDecoder() }
+    private val watchdogRunnable = object : Runnable {
+        override fun run() {
+            runCatching { checkVideoStall() }
+            uiHandler.postDelayed(this, 1000)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         QpmLog.i(TAG, "onCreate：接收端界面创建（savedInstanceState=${savedInstanceState != null}）")
@@ -175,12 +191,20 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         QpmLog.i(TAG, "surfaceCreated：Surface 就绪，初始化解码器")
         destroyed = false
         uiHandler.removeCallbacks(pairTimeoutRunnable)
+        initPipeline(holder.surface)
+    }
+
+    /**
+     * 建立「解码器 + 连接 + 看门狗」这条流水线。Surface 首次就绪时调用；
+     * 从后台回来（见 onStart）也会复用，避免同一 Surface 上挂着两个 MediaCodec。
+     */
+    private fun initPipeline(surface: Surface) {
         // 切后台再回来会重建 Surface，旧解码器仍挂在旧 Surface 上：必须先释放。
         // 一个 Surface 的 BufferQueue 只有单 producer 槽位，两个 MediaCodec 同时
         // configure 同一个 Surface 会 configure 失败 / 旧解码器渲染时 native abort。
         val stale = decoder
         if (stale != null) {
-            QpmLog.i(TAG, "surfaceCreated：释放挂在旧 Surface 上的解码器 ${stale.videoW}x${stale.videoH}")
+            QpmLog.i(TAG, "初始化流水线：释放挂在旧 Surface 上的解码器 ${stale.videoW}x${stale.videoH}")
             client?.decoder = null
             decoder = null
             runCatching { stale.stop() }
@@ -189,7 +213,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         lastTargetH = -1
         // 用最近一次已知的真实尺寸配置（候选链兜底，见 buildDecoder）：
         // 写死 1920x1080 或直接拿超限尺寸硬配，都会在部分机型上出问题
-        val built = buildDecoder(holder.surface, lastVideoW, lastVideoH)
+        val built = buildDecoder(surface, lastVideoW, lastVideoH)
         if (built == null) {
             QpmLog.e(TAG, "解码器初始化失败（${lastVideoW}x$lastVideoH）")
             tvStage.text = getString(R.string.receiver_decoder_fail)
@@ -213,6 +237,97 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
 
         startClient(dec, null)
         showSearching()
+        uiHandler.removeCallbacks(watchdogRunnable)
+        uiHandler.postDelayed(watchdogRunnable, 2000)
+    }
+
+    /**
+     * 「连上了但画面不动」的兜底恢复。
+     *
+     * 发送端在链路吃不住码率时会连续丢 P 帧（甚至整段停发），接收端的参考链断掉、
+     * 画面就停在最后一帧，而 TCP 并没有断——用户看到的就是「连上显示一下就没了」。
+     * 这里先按 3s 间隔要一个关键帧（发送端补 IDR 就能续上）；仍然不动就重连一次，
+     * 重新走一遍握手并把码率降下来。一次卡顿只重连一次，避免无限循环。
+     */
+    private fun checkVideoStall() {
+        if (destroyed || isFinishing || isDestroyed) return
+        val c = client ?: return
+        if (!paired || !c.hasVideo()) return
+        val gap = c.videoGapMs()
+        if (gap < STALL_HINT_MS) {
+            // 画面恢复：把提示条收掉，并允许下一次卡顿再重连一次
+            if (stallHintShown) {
+                stallHintShown = false
+                hint.text = ""
+            }
+            lastStallReconnectAt = 0L
+            return
+        }
+        if (!stallHintShown) {
+            stallHintShown = true
+            hint.text = getString(R.string.receiver_stall_recovering)
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastKeyReqAt > 3000) {
+            lastKeyReqAt = now
+            QpmLog.w(TAG, "画面停更 ${gap}ms，向发送端请求关键帧")
+            c.requestKeyFrame()
+        }
+        if (gap > STALL_RECONNECT_MS && now - lastStallReconnectAt > 20_000) {
+            lastStallReconnectAt = now
+            val dec = decoder
+            QpmLog.w(TAG, "画面停更 ${gap}ms 且请求关键帧无效，强制重连")
+            if (dec != null) startClient(dec, null)
+        }
+    }
+
+    /**
+     * 解码器 onError（含 1101 = ERROR_RECLAIMED，资源被系统回收）触发的重建请求。
+     * 不能直接在工作线程 stop/release 当前 codec（会与回调竞争，部分 ROM 直接死锁），
+     * 故 post 到 UI 线程延迟执行；300ms 远小于系统回收后的宽限期，满足「尽快 release」要求。
+     */
+    private fun scheduleDecoderRecovery() {
+        if (destroyed || isFinishing || isDestroyed) return
+        uiHandler.removeCallbacks(decoderRecoveryRunnable)
+        uiHandler.postDelayed(decoderRecoveryRunnable, 300)
+    }
+
+    /**
+     * 重建解码器并重新走一遍握手拿关键帧。1101 是终止态：必须先 release 旧 codec，
+     * 否则宽限期一到系统直接杀进程（无堆栈 SIGABRT）。H264Decoder.stop() 内含 release。
+     * 连续失败有次数上限，避免 codec 持续被回收时陷入无限重建。
+     */
+    private fun recoverDecoder() {
+        if (destroyed || isFinishing || isDestroyed) return
+        if (decoderRecoveryAttempts >= MAX_DECODER_RECOVERY) {
+            QpmLog.e(TAG, "解码器重建已连续失败 $decoderRecoveryAttempts 次，停止重试")
+            runUi { tvStage.text = getString(R.string.receiver_decoder_fail) }
+            return
+        }
+        decoderRecoveryAttempts++
+        val surface = runCatching { surfaceView.holder.surface }.getOrNull()
+        if (surface == null || !surface.isValid) {
+            QpmLog.w(TAG, "解码器重建跳过：Surface 无效（等待 surfaceCreated）")
+            return
+        }
+        val old = decoder
+        QpmLog.w(TAG, "解码器重建第 $decoderRecoveryAttempts 次：停旧实例并按 ${lastVideoW}x$lastVideoH 重建")
+        client?.decoder = null
+        decoder = null
+        runCatching { old?.stop() }
+        lastTargetW = -1
+        lastTargetH = -1
+        val built = buildDecoder(surface, lastVideoW, lastVideoH)
+        if (built == null) {
+            QpmLog.e(TAG, "解码器重建失败：所有候选尺寸都建不起来")
+            runUi { tvStage.text = getString(R.string.receiver_decoder_fail) }
+            return
+        }
+        val (dec, used) = built
+        decoder = dec
+        QpmLog.i(TAG, "解码器重建成功 ${used.first}x${used.second}，重新连接获取关键帧")
+        // 新解码器要重新拿 SPS/PPS 与关键帧，重连一次走完整握手
+        startClient(dec, null)
     }
 
     /** 停掉旧连接并用同一套回调建新客户端；host 为 null 时走 UDP 自动发现。 */
@@ -220,6 +335,8 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         QpmLog.i(TAG, "startClient：host=$host 加密=$useEncryption")
         client?.stop()
         paired = false
+        stallHintShown = false
+        lastStallReconnectAt = 0L
         // 任一连接入口都先尝试免密直连（autoPair 由 MirrorClient 内部按是否带码决定），
         // 故标记本次为「免密直连尝试」，便于被拒时给出正确提示
         lastAutoPairAttempt = true
@@ -424,6 +541,10 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
             // 配对成功：收起面板，露出视频画面
             statusPanel.visibility = View.GONE
             hint.text = getString(R.string.receiver_pair_ok)
+            // 全新握手成功，说明解码器链路健康，重置重建重试计数
+            decoderRecoveryAttempts = 0
+            lastKeyReqAt = 0L
+            lastStallReconnectAt = 0L
         } else {
             showPairing()
             if (lastAutoPairAttempt) {
@@ -488,12 +609,30 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         beaconThread = Thread { Discovery.broadcastReceiverLoop(Build.MODEL ?: getString(R.string.receiver_device_name)) }.apply {
             start()
         }
+        // onStop 里主动释放过硬解（避免被系统资源管理器回收）。若 Surface 还在，
+        // 这里把流水线重新建起来；Surface 已销毁时 surfaceCreated 会接手。
+        if (!destroyed && decoder == null) {
+            val surface = runCatching { surfaceView.holder.surface }.getOrNull()
+            if (surface != null && surface.isValid) {
+                QpmLog.i(TAG, "onStart：回到前台，重建解码与连接")
+                initPipeline(surface)
+            }
+        }
     }
 
     override fun onStop() {
         QpmLog.i(TAG, "onStop")
         beaconThread?.interrupt()
         beaconThread = null
+        // 切后台必须主动释放硬解：Android 12+ 的 ResourceManagerService 会从后台应用
+        // 回收 codec；回收后不 release（1101/ERROR_RECLAIMED 是终止态）系统会直接杀进程，
+        // 日志里只剩一条没有堆栈的 SIGABRT。这也是「进出接收端几次后必崩」的来源。
+        uiHandler.removeCallbacks(watchdogRunnable)
+        uiHandler.removeCallbacks(decoderRecoveryRunnable)
+        client?.stop()
+        decoder?.stop()
+        client = null
+        decoder = null
         super.onStop()
     }
 
@@ -501,6 +640,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         QpmLog.i(TAG, "onDestroy：接收端界面销毁（isFinishing=$isFinishing）")
         destroyed = true
         uiHandler.removeCallbacks(pairTimeoutRunnable)
+        uiHandler.removeCallbacks(watchdogRunnable)
         statsTimer?.cancel()
         statsTimer = null
         super.onDestroy()
@@ -736,8 +876,11 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
                     surface = surface,
                     onVideoSize = { vw, vh -> runUi { fitSurface(vw, vh) } },
                     onError = { msg ->
-                        QpmLog.e(TAG, "解码器错误: $msg")
+                        QpmLog.e(TAG, "解码器错误: $msg，准备重建解码器")
+                        // 只提示不重建 = 永久黑屏；而且 1101（ERROR_RECLAIMED）是终止态，
+                        // 文档要求立刻 release，否则宽限期一到系统直接杀进程（无堆栈 SIGABRT）
                         runUi { hint.text = getString(R.string.receiver_decoder_error, msg) }
+                        scheduleDecoderRecovery()
                     },
                     videoW = cw,
                     videoH = ch
@@ -837,6 +980,7 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         QpmLog.i(TAG, "surfaceDestroyed：Surface 销毁，停止解码与连接")
         destroyed = true
         uiHandler.removeCallbacks(pairTimeoutRunnable)
+        uiHandler.removeCallbacks(watchdogRunnable)
         statsTimer?.cancel()
         statsTimer = null
         client?.stop()
@@ -852,6 +996,13 @@ class ReceiverActivity : AppCompatActivity(), SurfaceHolder.Callback {
         /** 没拿到 SCREEN_INFO 时的默认 configure 尺寸（也是「已知能用」的回退目标）。 */
         private const val DEFAULT_W = 1920
         private const val DEFAULT_H = 1080
+
+        /** 画面停更多久开始要关键帧 / 多久后强制重连。 */
+        private const val STALL_HINT_MS = 3000L
+        private const val STALL_RECONNECT_MS = 10_000L
+
+        /** 解码器连续重建上限，超过后停止重试，避免 codec 被反复回收时无限重建。 */
+        private const val MAX_DECODER_RECOVERY = 3
 
         /**
          * 最近一次已知的发送端画面尺寸：进程内记住，重建解码器/返回界面时直接复用，

@@ -59,6 +59,13 @@ object Type {
     const val TOUCH_DOWN: Byte = 0x27
     const val TOUCH_MOVE: Byte = 0x28
     const val TOUCH_UP: Byte = 0x29
+
+    /**
+     * 关键帧请求：接收端 -> 手机，空 body。
+     * 接收端发现画面停更（连上了却连续几秒没有视频帧）时发一条，让发送端立刻补一个 IDR。
+     * 旧版发送端不认识该类型会直接忽略（分发用 when 且无 else 分支），不会断开连接。
+     */
+    const val KEY_REQ: Byte = 0x2A
 }
 
 /** 视频帧附加标志 */
@@ -303,6 +310,9 @@ object Proto {
         b.putShort(rttMs.coerceIn(0, 65535).toShort())
         return b.array()
     }
+
+    /** 关键帧请求：空 body（接收端发现画面停更时发送）。 */
+    fun keyRequest(): ByteArray = head(Type.KEY_REQ, 0).array()
 
     fun touchDown(x: Float, y: Float): ByteArray {
         val b = head(Type.TOUCH_DOWN, 8)
