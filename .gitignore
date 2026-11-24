@@ -27,3 +27,5 @@ tools/qpm_receiver/
 
 # Agent 工作数据（记忆/日志），不进版本库
 .workbuddy/
+.quickdock/
+.dsh-scratch/

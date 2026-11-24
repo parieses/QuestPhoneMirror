@@ -36,7 +36,7 @@ class QpmApp : Application() {
             // 交回原处理器，保留系统默认行为（弹「已停止」/生成 tombstone）
             previous?.uncaughtException(thread, throwable)
         }
-        QpmLog.i(TAG, "QpmApp 启动，全局崩溃捕获已安装")
+        QpmLog.i(TAG, "QpmApp 启动 build=${BuildConfig.BUILD_TAG} v${BuildConfig.VERSION_NAME}，全局崩溃捕获已安装")
         runCatching { reportPreviousExits() }
             .onFailure { QpmLog.w(TAG, "读取进程退出历史失败: ${it.message}") }
     }
@@ -50,8 +50,7 @@ class QpmApp : Application() {
             append("\napp: ").append(packageName)
             append("\n\n").append(sw)
         }
-        val dir = File(getExternalFilesDir(null), "crashes")
-        dir.mkdirs()
+        val dir = CrashStore.dir(this)
         File(dir, "crash-${System.currentTimeMillis()}.log").writeText(text)
         QpmLog.i(TAG, "崩溃堆栈已写入 ${dir.absolutePath}")
     }
@@ -74,11 +73,12 @@ class QpmApp : Application() {
         }.getOrNull() ?: return
         if (exits.isEmpty()) return
         val now = System.currentTimeMillis()
-        val dir = File(getExternalFilesDir(null), "crashes")
-        dir.mkdirs()
+        val dir = CrashStore.dir(this)
         for (e in exits) {
             if (now - e.timestamp > 10 * 60 * 1000L) continue
             val reason = reasonName(e.reason)
+            // 正常退出（滑动清理 / 用户主动停止）不落盘：否则每次关闭都像一次崩溃
+            if (!CrashStore.isAbnormal("exit-$reason-x.log")) continue
             val sb = StringBuilder()
             sb.append("time: ").append(FMT.format(Date(e.timestamp))).append('\n')
             sb.append("reason: ").append(reason).append(" (").append(e.reason).append(")\n")
@@ -121,6 +121,10 @@ class QpmApp : Application() {
         11 -> "USER_STOPPED"
         12 -> "DEPENDENCY_DIED"
         13 -> "OTHER"
+        14 -> "FREEZER"
+        15 -> "PACKAGE_STATE_CHANGE"
+        16 -> "PACKAGE_UPDATED"
+        17 -> "LOCKED_STATE"
         else -> "REASON_$reason"
     }
 

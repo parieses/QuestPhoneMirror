@@ -13,7 +13,6 @@ import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
@@ -32,6 +31,9 @@ import com.qpm.protocol.Frame
 import com.qpm.protocol.FrameReader
 import com.qpm.protocol.Proto
 import com.qpm.protocol.Type
+import com.qpm.mirror.rtc.QpmRtcLog
+import com.qpm.mirror.rtc.RtcSession
+import com.qpm.mirror.rtc.ScreenCapture
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -253,6 +255,12 @@ class CastService : Service() {
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
     private var encoder: H264Encoder? = null
+    /**
+     * WebRTC 版全进程唯一的屏幕采集管线（采集器 + VideoSource + VideoTrack）。
+     * 服务启动时建一次并一直跑，所有接收端连接共用同一条轨道——同一个 MediaProjection
+     * 授权只允许 createVirtualDisplay 一次，第二个连接再建采集器必崩（详见 ScreenCapture）。
+     */
+    private var capture: ScreenCapture? = null
     private var server: ServerSocket? = null
     private var broadcastThread: Thread? = null
     private var peerWatchThread: Thread? = null
@@ -377,60 +385,45 @@ class CastService : Service() {
         videoDpi = vdpi
         QpmLog.i(TAG, "屏幕 ${metrics.widthPixels}x${metrics.heightPixels}@${metrics.densityDpi}dpi -> 编码 ${vw}x${vh}@${vdpi}dpi")
 
-        val pm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        projection = pm.getMediaProjection(code, data)
-        if (projection == null) {
-            postStatus("录屏会话创建失败（系统拒绝了授权），请重新开始投屏")
+        // WebRTC 采集：采集器**只建这一次**（Android 14+ 同一个授权 token 只能
+        // createVirtualDisplay 一次）。启动时就建、一直出帧，后续每个接收端连接只是把
+        // 同一条 VideoTrack 挂到自己的 PeerConnection 上，永远不会二次建虚拟显示。
+        try {
+            capture = ScreenCapture.start(
+                context = this,
+                projectionData = data,
+                width = videoW,
+                height = videoH,
+                fps = 30,
+                onProjectionStop = {
+                    // 系统撤销授权（通知栏停止/被别的投屏抢占）：投屏已无法继续
+                    QpmLog.w(TAG, "MediaProjection onStop：授权被系统撤销")
+                    postStatus("录屏授权被系统撤销，投屏已停止")
+                    mainHandler.post { stopAll() }
+                },
+                onContentResize = { w, h ->
+                    // 必须切到主线程再改采集格式：ScreenCapturerAndroid 内部把 resize 派到
+                    // 采集线程执行，从采集线程回调里再调会自锁。
+                    val (sw, sh, _) = scaledVideoSize(w, h, metrics.densityDpi)
+                    mainHandler.post {
+                        val cap = capture
+                        if (cap != null && sw > 0 && sh > 0 && (sw != cap.width || sh != cap.height)) {
+                            cap.resizeTo(sw, sh, 30)
+                            QpmLog.i(TAG, "采集内容 ${w}x$h，采集尺寸切到 ${sw}x$sh")
+                        }
+                        broadcastScreenInfo()
+                        broadcastThread?.interrupt()
+                        broadcastThread = Thread { Discovery.broadcastLoop(TCP_PORT, w, h) }.apply { start() }
+                    }
+                }
+            )
+        } catch (e: Throwable) {
+            QpmLog.e(TAG, "屏幕采集启动失败：${e.message}", e)
+            postStatus("录屏采集启动失败（授权已失效），请停止后重新开始投屏")
             stopAll()
             return
         }
-        projection?.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                QpmLog.w(TAG, "MediaProjection onStop：授权被系统撤销")
-                postStatus("录屏授权被系统撤销，投屏已停止")
-                stopAll()
-            }
-
-            /**
-             * Android 14+ 在系统真正改变采集内容尺寸时（旋转、强制横屏、分屏拖动）
-             * 直接告知新尺寸，比自建 DisplayListener 更权威，也能覆盖「手机没转、
-             * App 自己 setRequestedOrientation 强制横屏」这类场景。
-             * 这里只当提醒用，真正的处理统一走 scheduleReconfigure（防抖 + 尺寸核对）。
-             */
-            override fun onCapturedContentResize(width: Int, height: Int) {
-                QpmLog.i(TAG, "系统报告采集内容尺寸变化：${width}x$height")
-                if (width > 0 && height > 0) scheduleReconfigure()
-            }
-        }, null)
-
-        val gen = encoderGen.incrementAndGet()
-        val enc = try {
-            newEncoder(videoW, videoH, gen)
-        } catch (e: Exception) {
-            QpmLog.e(TAG, "编码器初始化失败: ${e.message}")
-            postStatus("编码器初始化失败：${e.message ?: "本机不支持 H.264 硬编"}，投屏已停止")
-            stopAll()
-            return
-        }
-        encoder = enc
-        activeGen = gen
-        startStatsTicker()
-
-        display = projection?.createVirtualDisplay(
-            "qpm-cast",
-            videoW,
-            videoH,
-            videoDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            enc.inputSurface,
-            null,
-            null
-        )
-        if (display == null) {
-            postStatus("虚拟显示创建失败，投屏已停止")
-            stopAll()
-            return
-        }
+        QpmLog.i(TAG, "WebRTC 采集已就绪（${videoW}x${videoH}），等待接收端配对")
 
         applyKeepAwake()
         postStatus("投屏中，配对码 $pairCode（仅本机在网时接收端可免码直连）")
@@ -561,6 +554,14 @@ class CastService : Service() {
      */
     private fun reconfigureForRotation() {
         if (!running || reconfiguring) return
+        // WebRTC 版：旋转由 ScreenCapturerAndroid 的 onCapturedContentResize 处理
+        // （changeCaptureFormat + 重发 SCREEN_INFO）。旧的「重建编码器 + VirtualDisplay」
+        // 路径依赖 encoder/display，二者在 WebRTC 版恒为 null，走进去只会 fail 并弹错误提示。
+        return
+    }
+
+    @Suppress("unused")
+    private fun reconfigureForRotationLegacy() {
         val m = realMetrics()
         val w = m.widthPixels
         val h = m.heightPixels
@@ -792,6 +793,20 @@ class CastService : Service() {
         getSharedPreferences("qpm_screen_timeout", Context.MODE_PRIVATE)
     }
 
+    /** 向所有已配对接收端广播屏幕尺寸（旋转/分屏后调用）。 */
+    private fun broadcastScreenInfo() {
+        val m = realMetrics()
+        val cap = capture
+        val cw = cap?.width ?: videoW
+        val ch = cap?.height ?: videoH
+        videoW = cw
+        videoH = ch
+        val info = Proto.screenInfo(m.widthPixels, m.heightPixels, m.densityDpi, cw, ch)
+        // 走可丢队列：本方法常在主线程调用（旋转回调），sendReliable 在文件传输把队列占满时会阻塞主线程
+        clients.forEach { if (it.paired) it.sendControl(info) }
+        QpmLog.i(TAG, "已广播 SCREEN_INFO：屏幕 ${m.widthPixels}x${m.heightPixels} 采集 ${cw}x$ch")
+    }
+
     /** 投屏期间禁止系统自动息屏（MediaProjection 熄屏即停，详见 README）。 */
     private fun applyKeepAwake() {
         if (!keepAwake) return
@@ -857,6 +872,9 @@ class CastService : Service() {
         display = null
         runCatching { projection?.stop() }
         projection = null
+        // 屏幕采集是进程级唯一资源，必须最后释放（等所有会话先拆完）
+        runCatching { capture?.dispose() }
+        capture = null
         restoreScreenOffTimeout()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -988,6 +1006,10 @@ class CastService : Service() {
             private set
 
         val isClosed: Boolean get() = closed
+
+        /** WebRTC 会话：配对成功后创建，SDP/ICE 经这条 TCP 辅助通道交换。 */
+        @Volatile private var session: RtcSession? = null
+        /** 采集器引用：旋转时调 changeCaptureFormat 改采集尺寸（会话关闭时由 RtcSession 一并 dispose）。 */
 
         /** 接收端设备名（HELLO 帧报送），未报送时为空。 */
         @Volatile
@@ -1205,6 +1227,17 @@ class CastService : Service() {
                         // 剪贴板同步：接收端 -> 手机（写入手机剪贴板）
                         Type.CLIPBOARD -> if (paired) handleClipboardSync(Decoders.clipboardOf(frame))
 
+                        // WebRTC 信令：SDP/ICE 转发给本连接的 RtcSession
+                        Type.SDP -> session?.acceptAnswer(Decoders.sdpOf(frame))
+                        Type.ICE -> {
+                            val p = Decoders.iceOf(frame)
+                            session?.addIce(p[0], p[1].toIntOrNull() ?: 0, p[2])
+                        }
+                        Type.RTC_RESTART -> {
+                            QpmRtcLog.i("Cast", "对端请求 restartIce")
+                            session?.restartIce()
+                        }
+
                         // 延迟探针：原样回带 t1，接收端用本机时钟算 RTT（不要求时钟同步）
                         Type.PING -> sendControl(
                             Proto.pong(Decoders.pingOf(frame), SystemClock.elapsedRealtime().toInt())
@@ -1236,6 +1269,75 @@ class CastService : Service() {
             }
         }
 
+        /** 配对成功后建 WebRTC offer 会话：把共享屏幕轨挂上，走 SDP 协商。 */
+        private fun startRtc() {
+            val shared = capture
+            if (shared == null) {
+                QpmLog.e(TAG, "startRtc：屏幕采集未就绪，无法建立 WebRTC 会话")
+                postStatus("屏幕采集未就绪，请停止后重新开始投屏")
+                mainHandler.post { close() }
+                return
+            }
+            // 同一台设备重连（或 ICE 重建）时先拆掉旧会话，避免两条 PeerConnection 抢同一条轨
+            runCatching { session?.close() }
+            session = RtcSession(this@CastService, RtcSession.Role.OFFER, object : RtcSession.Events {
+                override fun onSignalSdp(sdp: String) = sendReliable(Proto.sdp(sdp))
+                override fun onSignalIce(mid: String, index: Int, candidate: String) =
+                    sendReliable(Proto.ice(mid, index, candidate))
+                override fun onRemoteTrack(track: org.webrtc.VideoTrack) = Unit
+                override fun onDataMessage(data: ByteArray) {
+                    // 控制帧从 DataChannel 来：分发到无障碍注入（TouchMapper 帧格式不变）
+                    com.qpm.mirror.rtc.ControlChannel.dispatch(data, controlSink)
+                }
+                override fun onIceState(state: org.webrtc.PeerConnection.IceConnectionState) {
+                    QpmRtcLog.i("Cast", "ICE=${state.name} host=${hostAddress}")
+                    if (state == org.webrtc.PeerConnection.IceConnectionState.CONNECTED) {
+                        sendReliable(Proto.rtcReady())
+                        postStatus("接收端 ${displayName()} WebRTC 已连通")
+                    }
+                }
+                override fun onConnected() = Unit
+                override fun onNeedRebuild(reason: String) {
+                    QpmRtcLog.w("Cast", "需要重建: $reason，重新协商")
+                    session?.restartIce()
+                }
+                override fun onError(reason: String) {
+                    // 协商硬失败：这条连接已经没救了，断开让接收端重连（重连走全新的 PeerConnection）
+                    QpmRtcLog.e("Cast", "会话失败：$reason")
+                    postStatus("画面协商失败：$reason")
+                    mainHandler.post { close() }
+                }
+            })
+            session?.attachVideoTrack(shared.track)
+            // 触摸映射的前提：接收端必须先拿到手机真实屏幕尺寸（TouchMapper 为 0 时直接丢弃触摸）。
+            syncScreenInfo()
+            session?.startOffer()
+            QpmRtcLog.i("Cast", "WebRTC offer 会话已建立 host=${hostAddress}（复用共享采集 ${shared.width}x${shared.height}）")
+        }
+
+        /** 上报手机真实屏幕尺寸 + 当前采集尺寸，驱动接收端触摸坐标映射。 */
+        private fun syncScreenInfo() {
+            val m = realMetrics()
+            val cap = capture
+            val cw = cap?.width ?: videoW
+            val ch = cap?.height ?: videoH
+            sendReliable(Proto.screenInfo(m.widthPixels, m.heightPixels, m.densityDpi, cw, ch))
+            QpmLog.i(TAG, "已下发 SCREEN_INFO：屏幕 ${m.widthPixels}x${m.heightPixels} 采集 ${cw}x$ch")
+        }
+
+        /** ControlChannel 的注入目标，复用 QpmControlService（无需改无障碍服务）。 */
+        private val controlSink = object : com.qpm.mirror.rtc.ControlChannel.ControlSink {
+            override fun tap(x: Float, y: Float) = dispatchControl { it.tap(x, y) }
+            override fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Int) =
+                dispatchControl { it.swipe(x1, y1, x2, y2, durationMs) }
+            override fun text(s: String) = dispatchControl { it.sendText(s) }
+            override fun key(keycode: Int) = dispatchControl { it.key(keycode) }
+            override fun touchDown(x: Float, y: Float) = dispatchControl { it.touchDown(x, y) }
+            override fun touchMove(points: FloatArray) = dispatchControl { it.touchMove(points) }
+            override fun touchUp() = dispatchControl { it.touchUp() }
+            override fun clipboard(text: String) = handleClipboardSync(text)
+        }
+
         private fun handlePair(code: String) {
             val host = socket.inetAddress?.hostAddress
             // 白名单门控：被禁止的设备直接拒绝并断开，不进入配对流程
@@ -1251,6 +1353,7 @@ class CastService : Service() {
                     paired = true
                     sendReliable(Proto.pairResult(true))
                     onPaired(this)
+                    startRtc()
                     QpmLog.i(TAG, "免密直连已接受（网络内唯一发送端）")
                 } else {
                     sendReliable(Proto.pairResult(false))
@@ -1262,6 +1365,7 @@ class CastService : Service() {
                 paired = true
                 sendReliable(Proto.pairResult(true))
                 onPaired(this)
+                startRtc()
             } else {
                 pairFails++
                 sendReliable(Proto.pairResult(false))
@@ -1382,6 +1486,8 @@ class CastService : Service() {
             // 队列里未写出的池帧必须归还引用，否则槽会永久占用、池逐渐耗尽
             queue.forEach { it.slot?.release() }
             queue.clear()
+            runCatching { session?.close() }
+            session = null
             runCatching { pushOs?.close() }
             runCatching { socket.close() }
             onClose(this)

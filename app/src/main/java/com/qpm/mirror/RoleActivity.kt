@@ -26,11 +26,19 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
     private lateinit var cardUpdate: View
     private lateinit var tvVersion: TextView
     private lateinit var tvUpdateBadge: TextView
+    private lateinit var cardCrash: View
+    private lateinit var tvCrashInfo: TextView
     private lateinit var updater: AppUpdater
+
+    /** 横幅当前指向的记录；点开后写入 seen，避免每次回首页都打扰。 */
+    private var pendingCrash: File? = null
 
     private val checkExecutor = Executors.newSingleThreadExecutor()
     private val checkPrefs: SharedPreferences by lazy {
         getSharedPreferences(PREFS_CHECK, Context.MODE_PRIVATE)
+    }
+    private val crashPrefs: SharedPreferences by lazy {
+        getSharedPreferences(PREFS_CRASH, Context.MODE_PRIVATE)
     }
 
     private var checking = false
@@ -61,9 +69,26 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
         cardUpdate = findViewById(R.id.cardUpdate)
         tvVersion = findViewById(R.id.tvVersion)
         tvUpdateBadge = findViewById(R.id.tvUpdateBadge)
+        cardCrash = findViewById(R.id.cardCrash)
+        tvCrashInfo = findViewById(R.id.tvCrashInfo)
         updater = AppUpdater(this).also { it.listener = this }
 
-        tvVersion.text = getString(R.string.update_version_line, BuildConfig.VERSION_NAME)
+        // 崩溃记录必须够「一眼能看到」：上次若是启动即崩，用户根本进不了诊断页，
+        // 所以把最近一条异常退出直接顶到首屏，点开就是堆栈正文。
+        cardCrash.setOnClickListener {
+            pendingCrash?.let { f ->
+                crashPrefs.edit().putString(KEY_SEEN_CRASH, f.name).apply()
+            }
+            cardCrash.visibility = View.GONE
+            startActivity(
+                Intent(this, LogViewerActivity::class.java)
+                    .putExtra(LogViewerActivity.EXTRA_OPEN_CRASH, true)
+            )
+        }
+
+        // 带上编译时刻：首屏一眼能看出装的是不是刚打出来的包（版本号长期是 0.1，区分不了）
+        tvVersion.text = getString(R.string.update_version_line, BuildConfig.VERSION_NAME) +
+            " · build " + BuildConfig.BUILD_TAG
 
         findViewById<View>(R.id.cardSender).setOnClickListener {
             startActivity(Intent(this, SenderActivity::class.java))
@@ -80,9 +105,27 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
     override fun onResume() {
         super.onResume()
         activityResumed = true
+        maybeShowCrashBanner()
         // 先补下载中的状态（可能下载完离开过页面），再做节流后的自动检查
         updater.onResume()
         maybeAutoCheck()
+    }
+
+    /** 有近期未看过的崩溃/异常退出记录时，在首屏顶部提示。 */
+    private fun maybeShowCrashBanner() {
+        val f = CrashStore.latest(this)
+        if (f == null || System.currentTimeMillis() - f.lastModified() > CRASH_FRESH_MS) {
+            cardCrash.visibility = View.GONE
+            return
+        }
+        val seen = crashPrefs.getString(KEY_SEEN_CRASH, "") ?: ""
+        if (f.name == seen) {
+            cardCrash.visibility = View.GONE
+            return
+        }
+        pendingCrash = f
+        tvCrashInfo.text = getString(R.string.role_crash_desc, CrashStore.summary(f))
+        cardCrash.visibility = View.VISIBLE
     }
 
     override fun onPause() {
@@ -253,8 +296,13 @@ class RoleActivity : AppCompatActivity(), AppUpdater.Listener {
 
     private companion object {
         private const val PREFS_CHECK = "qpm_update_check"
+        private const val PREFS_CRASH = "qpm_crash_notice"
         private const val KEY_LAST_AUTO_CHECK = "last_auto_check"
         private const val KEY_SKIPPED_VERSION = "skipped_version"
+        private const val KEY_SEEN_CRASH = "seen_crash_file"
         private const val AUTO_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000L
+
+        /** 超过 1 天的崩溃不再打扰（用户多半已经知道了，翻诊断页仍能看到）。 */
+        private const val CRASH_FRESH_MS = 24 * 60 * 60 * 1000L
     }
 }

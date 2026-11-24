@@ -2,6 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+        WebRTC 的 AndroidNetworkMonitor 会在 native 侧通过 JNI 调
+        ConnectivityManager.getAllNetworks() / getNetworkCapabilities() 枚举网卡、
+        判断 Wi-Fi 类型。缺这两个权限时这些调用会抛 SecurityException，
+        而异常是从 native 发起的 JNI 调用里抛出的 → libwebrtc 的 RTC_CHECK 直接把进程
+        abort（tombstone 里就是 jvm.cc:81 Check failed: false，没有任何 Java 帧）。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

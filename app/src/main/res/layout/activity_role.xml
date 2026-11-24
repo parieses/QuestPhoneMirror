@@ -7,6 +7,52 @@
     android:orientation="vertical"
     android:padding="28dp">
 
+    <!-- 上次异常退出提示：默认隐藏，有未读的崩溃/异常退出记录时显示 -->
+    <LinearLayout
+        android:id="@+id/cardCrash"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="18dp"
+        android:background="@drawable/bg_card"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="14dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:contentDescription="@string/role_crash_title"
+            android:src="@drawable/ic_info" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/role_crash_title"
+                android:textColor="#F87171"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvCrashInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="#FCA5A5"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
     <ImageView
         android:layout_width="96dp"
         android:layout_height="96dp"

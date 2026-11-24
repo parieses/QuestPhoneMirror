@@ -66,6 +66,16 @@ object Type {
      * 旧版发送端不认识该类型会直接忽略（分发用 when 且无 else 分支），不会断开连接。
      */
     const val KEY_REQ: Byte = 0x2A
+
+    // ---------- WebRTC 信令（0x30+，与旧帧不冲突） ----------
+    /** SDP：body = UTF-8 offer/answer 文本。 */
+    const val SDP: Byte = 0x30
+    /** ICE candidate：body = UTF-8 "sdpMid|sdpMLineIndex|candidate"。 */
+    const val ICE: Byte = 0x31
+    /** WebRTC 链路就绪（ICE connected）：空 body 或 "1"。 */
+    const val RTC_READY: Byte = 0x32
+    /** 重新协商请求（ICE restart 后）：空 body。 */
+    const val RTC_RESTART: Byte = 0x33
 }
 
 /** 视频帧附加标志 */
@@ -328,6 +338,32 @@ object Proto {
     }
 
     fun touchUp(): ByteArray = head(Type.TOUCH_UP, 0).array()
+
+    // ---------- WebRTC 信令 ----------
+
+    fun sdp(text: String): ByteArray {
+        val raw = text.toByteArray(StandardCharsets.UTF_8)
+        val b = head(Type.SDP, raw.size)
+        b.put(raw)
+        return b.array()
+    }
+
+    /**
+     * sdpMid 不含 '|'，candidate 也不含 '|'，可直接用竖线分隔。
+     *
+     * [sdpMid] 收 nullable：libwebrtc 的 IceCandidate.sdpMid 是 @Nullable，个别网络
+     * 状态下会真的给 null；调用方若把它塞进非空参数，抛出的 NPE 会发生在 native 信令
+     * 线程上，直接被 libwebrtc 的 RTC_CHECK 变成 SIGABRT。
+     */
+    fun ice(sdpMid: String?, sdpMLineIndex: Int, candidate: String): ByteArray {
+        val raw = "${sdpMid ?: "0"}|$sdpMLineIndex|$candidate".toByteArray(StandardCharsets.UTF_8)
+        val b = head(Type.ICE, raw.size)
+        b.put(raw)
+        return b.array()
+    }
+
+    fun rtcReady(): ByteArray = head(Type.RTC_READY, 0).array()
+    fun rtcRestart(): ByteArray = head(Type.RTC_RESTART, 0).array()
 }
 
 /** 阻塞读取完整帧；流结束返回 null。 */
@@ -483,6 +519,14 @@ object Decoders {
         if (count <= 0) return FloatArray(0)
         val b = ByteBuffer.wrap(f.body).order(ByteOrder.LITTLE_ENDIAN)
         return FloatArray(count * 2) { b.float }
+    }
+
+    fun sdpOf(f: Frame): String = String(f.body, StandardCharsets.UTF_8)
+
+    /** 返回 [sdpMid, sdpMLineIndex, candidate]；畸形帧返回空 candidate。 */
+    fun iceOf(f: Frame): Array<String> {
+        val parts = String(f.body, StandardCharsets.UTF_8).split("|", limit = 3)
+        return if (parts.size == 3) arrayOf(parts[0], parts[1], parts[2]) else arrayOf("", "0", "")
     }
 }
 

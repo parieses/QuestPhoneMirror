@@ -1,3 +1,6 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,6 +16,13 @@ android {
         targetSdk = 34
         versionCode = (project.findProperty("VERSION_CODE") as String?)?.toIntOrNull() ?: 1
         versionName = (project.findProperty("VERSION_NAME") as String?) ?: "0.1"
+        // 编译时刻戳：版本号长期停在 0.1，装没装上新包只靠日志里的业务文案判断容易误判
+        // （旧包日志里的字符串在新包中已不存在，排查时极易拿旧日志分析新代码）。
+        buildConfigField(
+            "String",
+            "BUILD_TAG",
+            "\"" + SimpleDateFormat("MMdd-HHmm").format(Date()) + "\""
+        )
     }
 
     signingConfigs {
@@ -67,4 +77,7 @@ dependencies {
     implementation(project(":protocol"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // WebRTC 原生栈：org.webrtc 包名与原 google-webrtc 一致，后者已停止维护。
+    // 选 144.x 而非最新 150.x：targetSdk 34 上更稳，API 一致。
+    implementation("io.github.webrtc-sdk:android:144.7559.09")
 }

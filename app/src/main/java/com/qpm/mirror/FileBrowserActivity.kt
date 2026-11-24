@@ -104,8 +104,8 @@ class FileBrowserActivity : AppCompatActivity() {
         }
 
         client = MirrorClient(
-            decoder = null,
-            onScreenInfo = { _, _, _, _, _ -> },
+            context = this,
+            onScreenInfo = { _, _, _ -> },
             onStatus = { s -> runOnUiThread { tvFileStatus.text = s } },
             onDisconnected = { runOnUiThread { tvFileStatus.text = getString(R.string.file_disconnected) } },
             onPairResult = { ok -> runOnUiThread {

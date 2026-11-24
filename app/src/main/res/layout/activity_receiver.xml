@@ -5,7 +5,8 @@
     android:layout_height="match_parent"
     android:background="#FF0B1220">
 
-    <SurfaceView
+    <!-- WebRTC 渲染器：替代自研 MediaCodec + SurfaceView，内置抖动缓冲与硬解。 -->
+    <org.webrtc.SurfaceViewRenderer
         android:id="@+id/surface"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
