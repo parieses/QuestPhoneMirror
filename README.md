@@ -5,9 +5,9 @@
 *Quest / 手机 / 平板 / 电脑端，一个 APK 双角色，两端同一 Wi-Fi 即用*
 
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B%20%2F%20Quest-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
-[![Version](https://img.shields.io/badge/Version-v0.24-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
+[![Version](https://img.shields.io/badge/Version-v0.25-4a9eff)](https://github.com/parieses/QuestPhoneMirror/releases)
 [![License](https://img.shields.io/badge/License-MIT-4a9eff)](https://github.com/parieses/QuestPhoneMirror/blob/main/LICENSE)
-[![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20MediaCodec-4a9eff)](https://developer.android.com/reference/android/media/MediaCodec)
+[![Built with](https://img.shields.io/badge/Built_with-Kotlin%20%2B%20WebRTC-4a9eff)](https://webrtc.org/)
 [![Min SDK](https://img.shields.io/badge/Min__SDK-24-4a9eff)](https://github.com/parieses/QuestPhoneMirror)
 
 🌐 官网 [https://parieses.github.io/QuestPhoneMirror/](https://parieses.github.io/QuestPhoneMirror/)　·　📦 Releases [https://github.com/parieses/QuestPhoneMirror/releases](https://github.com/parieses/QuestPhoneMirror/releases)　·　🐛 Issues [https://github.com/parieses/QuestPhoneMirror/issues](https://github.com/parieses/QuestPhoneMirror/issues)
@@ -22,8 +22,8 @@
 ## ✨ 它解决什么
 
 想在大屏上操作手机：竞品要么依赖 PC 中转（scrcpy + USB）、要么绑定云账号、要么在 Quest 上只能看不能控。
-QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏硬编 H.264 推流，接收端硬解渲染，
-控制指令沿同一条 TCP 连接回传，由无障碍服务以真实手势执行。
+QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏经 **WebRTC** 推流，接收端用 `SurfaceViewRenderer` 渲染，
+控制指令沿同一条加密 TCP 辅助通道回传，由无障碍服务以真实手势执行。
 
 - **双角色单 APK**：同一份包装在手机上是发送端，装在 Quest / 手机 / 平板上是接收端，打开选个角色即用
 - **自动发现**：手机每秒 UDP 广播，接收端打开即连，无需输入 IP；局域网唯一发送端时**免配对码直连**
@@ -37,7 +37,7 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 | 能力 | 一句话 |
 |---|---|
-| 实时镜像 | 长边 ≤1280 等比降采样 + 30fps H.264 硬编（CBR / 无 B 帧低延迟），画质三档可调（流畅 4M / 均衡 6M / 高清 10M），并按接收端反馈自动升降码率 |
+| 实时镜像 | **WebRTC**（`io.github.webrtc-sdk`）点对点直连：`ScreenCapturerAndroid` 采集屏幕、长边 ≤1920 等比降采样、30fps，码率交给 GCC 拥塞控制自适应；纯局域网只见 host candidate（零 STUN/TURN、零服务端） |
 | 自动发现 | UDP 45555 每秒广播 `QPM1\|端口\|宽x高`，接收端打开即连，无需输入 IP |
 | 免密直连 | 局域网内只有 1 个发送端时自动免密直连；检测到多个则弹出选择列表 |
 | 配对码保护 | 每次投屏随机生成 6 位配对码，输对才推流；连续输错 3 次断开 |
@@ -89,15 +89,12 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 
 **📺 实时镜像与画质**
 
-- `MediaProjection` 录屏 → `MediaCodec` 硬编 H.264（Surface 输入，VirtualDisplay 直接绘制）→ TCP 推流
-- **按长边 1280 等比降采样**：手机物理分辨率（1440×3200 等）全采全编会吃满 VENC/GPU 并触发热降频，实际帧率反而更低。`SCREEN_INFO` 同时携带真实屏幕尺寸（触摸映射用）与码流尺寸（configure 解码器用），两者不再相等
-- 编码参数为实时场景调优：**CBR + 无 B 帧 + 低延迟 + realtime 优先级**，消掉 VBR 码率尖峰与编码内 2~4 帧排队
-- 画质三档：**流畅 4M / 均衡 6M / 高清 10M**，默认均衡；弱网 / 2.4G Wi-Fi 选流畅。接收端每秒回报解码帧率 / 排队积压 / 丢帧 / RTT，发送端在不重建编码器的前提下于 2M~用户档上限之间自动升降码率（拥塞立刻降，连续 3 次良好才升）
-- **丢帧策略**：发送队列深度 3，满则丢最旧的**非关键帧**，关键帧永不丢；入队超过 150ms 的帧不再写入 socket（TCP 写进去就撤不回来，只会堆延迟），丢帧后节流请求 IDR 快速恢复。socket 发送缓冲限 64KB，给「不可撤回的旧帧」加硬上限；控制帧与视频帧共用一把**公平写锁**，控制不会被连续视频写无限插队
-- **CSD 兼容**：编码参数集（SPS/PPS）三重保险缓存，并**与 IDR 拼成同一帧**发送——分两帧时参数集可能被队列挤掉，接收端拿到没有参数集的 IDR 会花屏一个 GOP
-- **发送端零分配帧池**：编码输出缓冲与 wire 帧都走复用池（后者带引用计数，多接收端共享只读帧），池耗尽才退回普通分配
-- 接收端按编码端 pts 节奏做 25ms PTS pacing 渲染（`releaseOutputBuffer(index, timestampNs)`），网络抖动不再直接变成视觉抖动；**刻意不设 `low-latency` / `max-input-size` 等可选 configure 参数**——部分 codec2 机型会因此 configure 失败并触发候选尺寸降级，正是之前「连上就闪退」的成因
-- 新客户端接入时主动请求关键帧，避免花屏
+- `MediaProjection` 录屏 → `ScreenCapturerAndroid` 采集 → `VideoSource` / `VideoTrack` → WebRTC `PeerConnection`，媒体面 **DTLS-SRTP 加密**，纯局域网只见 host candidate（`iceServers` 为空、mDNS 混淆已禁用，candidate 直接是内网 IP）
+- **采集进程内唯一**：`ScreenCapture` 单例持有 capturer + source + track，多条连接复用同一条轨。同一个 `MediaProjection` 只允许建一个 `VirtualDisplay`，重复创建会立刻撤销录屏授权（表现为「连上几秒就断」），因此采集在开始投屏时建一次常驻，连接建立只挂轨
+- **按长边 1920 等比降采样**：手机物理分辨率（1440×3200 等）全采全编会吃满 VENC/GPU 并触发热降频，实际帧率反而更低。`SCREEN_INFO` 同时携带真实屏幕尺寸（触摸映射用）与码流尺寸（接收端布局参考），两者不再相等
+- **码率交给 GCC**：不再手工切 4M/6M/10M 档位，由 WebRTC 拥塞控制按实测带宽实时调节，弱网不再靠人肉试档；首帧不写 `x-google-start-bitrate` 之类 SDP 注入——插入位置违反 `m→i→c→b→a` 顺序会让 native 解析失败（`SessionDescription is NULL`）
+- **旋转不改采集格式**：`onCapturedContentResize` 只刷新上报尺寸与发现广播，画面由 `VirtualDisplay` 等比承载，触摸坐标靠 `SCREEN_INFO` 修正。`changeCaptureFormat()` 内部会再建一次虚拟显示，调它等于每次旋转都自杀
+- 控制帧全程走加密 TCP 辅助通道（配对 / 触摸 / 按键 / 文件 / 剪贴板 / 信令），视频与控制互不抢带宽
 
 **🔍 自动发现与免密直连**
 
@@ -175,6 +172,37 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 * * *
 
 ## 📝 更新日志
+
+### v0.25
+
+**架构变更：视频链路改用 WebRTC**
+
+自研「H.264 裸流 over TCP」换成 WebRTC（`io.github.webrtc-sdk:android:144.7559.09`），仍是**纯局域网、零服务端、单 APK 双角色**——只是把可靠性交给成熟栈，不再自己维护丢帧队列、码率反馈与解码器重建。
+
+- **媒体面**：`ScreenCapturerAndroid` 采集 → `VideoSource`/`VideoTrack` → `PeerConnection`，DTLS-SRTP 加密；`iceServers` 为空、禁用 mDNS 混淆，candidate 直接是内网 IP，出网即连
+- **信令复用现有链路**：新增 `SDP(0x30)` / `ICE(0x31)` / `RTC_READY(0x32)` / `RTC_RESTART(0x33)` 四种帧，走原有加密 TCP 辅助通道（发现、配对、加密握手全部沿用，不引入任何账号或云服务）
+- **控制面不变**：触摸 / 按键 / 文件 / 剪贴板仍走加密 TCP，与视频互不抢带宽
+- **码率交给 GCC**：移除画质三档与 `FEEDBACK` 驱动的自适应，拥塞控制由 WebRTC 自行调节
+
+**修复（这一轮踩到的四个真实缺陷）**
+
+- **连上几秒就断**：每次连接都新建 `ScreenCapturerAndroid`，第二次 `createVirtualDisplay` 触发 `Don't take multiple captures on the same instance`，系统随即撤销录屏授权 → `onStop` → 断流 → 重连 → 再撤销的死循环。现改为 `ScreenCapture` 进程内唯一采集，连接只挂轨
+- **`SessionDescription is NULL`（offer 从未发出）**：向 SDP 的 `m=video` 后注入 `a=x-google-start-bitrate`，位置落在 `c=` 之前，违反 `m→i→c→b→a` 行序，libwebrtc 解析失败。已删除 SDP 注入
+- **`SIGABRT`（`jvm.cc:81 Check failed: false`，无 Java 栈）**：libwebrtc 每次 JNI 回调返回都 `RTC_CHECK(!ExceptionCheck())`，Java 侧任何异常都会打崩整个进程。已补齐 `ACCESS_NETWORK_STATE` / `ACCESS_WIFI_STATE`（`NetworkMonitorAutoDetect` 缺权限会抛 `SecurityException`），并把全部 native 回调（`PeerConnection.Observer`、`DataChannel.Observer`、SDP 回调、原生日志桥）包进 `guard{}`，异常只落日志
+- **`The order of m-lines in answer doesn't match order in offer`**：本地 `localDescription` 与发出去的 offer 不是同一份所致。改为**显式** `setLocalDescription(observer, SessionDescription(OFFER, text))`，native 落地的描述与对端收到的文本逐字节一致；同时 offer 不再带 DataChannel，只保留单条 `m=video`
+
+**改进**
+
+- **首屏可辨认构建**：`BuildConfig.BUILD_TAG` 打入编译时刻，启动首行与版本行显示 `build=MMdd-HHmm`，不再出现「装着旧包排查新问题」
+- **崩溃记录可管**：诊断页崩溃视图支持单条导出（`Download/qpm-crash-*.txt`）、单条删除、清空全部
+- **原生日志可见**：`QpmWebRtcLogBridge` 把 libwebrtc 的 WARNING+ 日志转到 `rtc/native` tag，无 adb 时也能看到 native 真实报错
+
+**已知问题**
+
+- 视频编解码暂用**软件** VP8/VP9（绕开 `HardwareVideoEncoderFactory` 的 JNI 反调路径，先保证不打崩进程），高分辨率下 CPU 占用偏高，硬编回归会在链路稳定后单独做
+- WebRTC 链路在部分机型 / 网络组合下仍可能协商失败，诊断日志页可看到 `rtc/Session` 与 `rtc/native` 全量过程
+
+* * *
 
 ### v0.24
 
@@ -314,16 +342,17 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 ## 🏗️ 架构
 
 ```
-┌──────────┐   MediaProjection 录屏   ┌────────────┐
- │  手机    │ ───────────────────────▶ │ H264Encoder│
- │ (发送端) │                          └─────┬──────┘
- │          │ ◀───────────────────────      │ H.264 裸流
- │          │   TCP 45556 反向控制消息        ▼
- │          │                          ┌───────────┐  同一局域网
- │          │                          │ TCP 服务   │ ────────▶ ┌──────────┐
- │          │                          └───────────┘           │ 接收端   │
- │          │ ◀── QpmControlService 执行点击/滑动/输入 ◀──────── │(任意设备)│
- └──────────┘        （无障碍手势，免 root）                    └──────────┘
+┌──────────┐  MediaProjection 录屏   ┌────────────────────┐
+ │  手机    │ ──────────────────────▶ │ ScreenCapture       │ 进程内唯一
+ │ (发送端) │                         │ capturer/source/track│
+ │          │                         └─────────┬──────────┘
+ │          │                                   │ VideoTrack
+ │          │                         ┌─────────▼──────────┐
+ │          │                         │ WebRTC PeerConnection│ ─ DTLS-SRTP ─▶ ┌──────────┐
+ │          │ ◀── TCP 45556 辅助通道 ──│ SDP/ICE + 配对/控制  │                │ 接收端   │
+ │          │      （加密，双向）        └────────────────────┘                │(任意设备)│
+ │          │ ◀── QpmControlService 执行点击/滑动/输入 ◀───────────────────── │SurfaceView│
+ └──────────┘        （无障碍手势，免 root）                                   └──────────┘
        ▲                                                              │
        └── UDP 45555 每秒广播 QPM1|端口|宽x高，接收端监听即自动发现 ──┘
 ```
@@ -331,11 +360,10 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 **架构亮点**
 
 - **协议层零依赖**：`protocol/` 纯 Kotlin 库（帧编解码 + 发现），无 Android 依赖——第三方实现电脑端只依赖这一层
-- **Surface 输入编码**：VirtualDisplay 直接画进编码器 InputSurface，无 YUV 拷贝
-- **异步 MediaCodec**：输入缓冲由回调分配入队，规避异步模式下 `dequeueInputBuffer` 返回 -1 导致的全帧丢弃
-- **丢帧保延迟**：每客户端独立队列，深度 3 满则丢最旧的非关键帧、入队超 150ms 的帧不再写入 socket；socket 发送缓冲限 64KB；控制 / 文件与视频共用一把公平写锁，两类流量互不阻塞
-- **发送侧零拷贝倾向**：编码输出缓冲与 wire 帧复用池（引用计数），接收端 `FrameReader` 包 64KB `BufferedInputStream`；每帧大数组分配从 4 次降到 0~1 次
-- **门控清晰**：配对前视频 / 控制 / 文件全部门控；白名单在配对前拦截
+- **信令不新建连接**：WebRTC 的 offer / answer / candidate 全部复用已有的加密 TCP 辅助通道，配对与白名单在前，信令在后，不需要额外端口或服务端
+- **采集单例**：`ScreenCapture` 在开始投屏时建一次、常驻出帧，多条连接复用同一条 `VideoTrack`；`RtcSession.close()` 显式不释放共享轨，断开一个接收端不会停掉其他人的画面
+- **纯局域网 ICE**：`iceServers` 为空 + 禁用 mDNS 混淆，候选地址直接是可路由的内网 IP，不依赖 STUN 也不泄露 `.local` 域名
+- **门控清晰**：未配对不发 SDP；白名单在配对前拦截；视频与控制走不同通道，互不阻塞
 
 * * *
 
@@ -346,7 +374,7 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 1. **发现**：UDP 监听 `45555`，收到 `QPM1|<tcpPort>|<w>x<h>` 即得到发送端 IP 与端口
 2. **连接**：TCP 连接 `<ip>:45556`
 3. **握手**：连接后双方先交换 `KEY_EXCHANGE`（`0x1E`，X.509 编码的 EC 公钥，**明文发送**）——接收端连上先发本方 KE，随后读取对端 KE 完成握手；握手完成后后续帧体 AES-GCM 加密（旧版本不交换则回落明文）。随后接收端发 `HELLO`（`0x1B`，UTF-8 设备名）；再发 `PAIR`（`0x14`）——空 body = 免密直连请求（仅当局域网只有一个发送端时被接受），非空 = 6 位配对码；等 `PAIR_RESULT`（`0x15`，1=成功）；被白名单拒绝会先收到 `REJECT`（`0x1C`）再被断开
-4. **收视频**：`VIDEO_FRAME`（`0x01`）= `[pts:u64][flags:u8][sentAtMs:u32][h264裸流]`，头部 13 字节；flags bit0=关键帧、bit1=SPS/PPS；SPS/PPS 已与 IDR 拼进同一帧（Annex-B 参数集紧跟起始码），原样喂解码器；首帧前先收 `SCREEN_INFO`（`0x20`）得知分辨率
+4. **收视频**：**v0.25 起视频不再走 `VIDEO_FRAME`**，改为 WebRTC——本端发 `SDP(0x30)` 后，按 `ICE(0x31)` 逐条收发候选，媒体面自行建立（DTLS-SRTP）。旧的 `VIDEO_FRAME`（`0x01`）= `[pts:u64][flags:u8][sentAtMs:u32][h264裸流]` 仅存在于 ≤v0.24 的版本；无论新旧，首帧前都会先收 `SCREEN_INFO`（`0x20`）得知屏幕与码流尺寸
 5. **发控制**：`TAP` / `SWIPE` / `TEXT` / `KEY`（`0x10-0x13`）写回同一连接，仅配对成功后有效。连续拖动推荐用 `TOUCH_DOWN` → 若干 `TOUCH_MOVE`（批量点）→ `TOUCH_UP`（`0x27-0x29`）；旧版逐条 `TAP`/`SWIPE` 仍兼容但拖动会是一串断续手势
 6. **回报延迟**（可选）：每 2s 发 `PING`（`0x24`）测 RTT、每秒发 `FEEDBACK`（`0x26`）；发送端据此自动调整码率，不发也能正常投屏
 7. **被扫描到**（可选）：向 `255.255.255.255:45555` 每秒广播 `QPMR|<设备名>`，发送端「连接管理」即出现本设备
@@ -382,6 +410,10 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 | `0x27` TOUCH_DOWN | 接收端→手机 | `[x:f32][y:f32]`，建立连续手势 |
 | `0x28` TOUCH_MOVE | 接收端→手机 | 连续 f32 坐标对 `[x1][y1][x2][y2]...`，按 32ms 窗口批量发 |
 | `0x29` TOUCH_UP | 接收端→手机 | 空 body，抬手结束连续手势 |
+| `0x30` SDP | 双向 | UTF-8，WebRTC offer / answer 全文（v0.25+） |
+| `0x31` ICE | 双向 | UTF-8 `sdpMid\|sdpMLineIndex\|candidate`（v0.25+） |
+| `0x32` RTC_READY | 手机→接收端 | 空 body，ICE 已连通（v0.25+） |
+| `0x33` RTC_RESTART | 双向 | 空 body，请求重新协商 / ICE restart（v0.25+） |
 
 端口：TCP `45556`，UDP `45555`。参考实现见 `app/` 的 `MirrorClient`（约 150 行）与 `protocol/`（纯协议编解码）。
 
@@ -394,13 +426,14 @@ QPM 把整条链路压进**一个 APK**——手机端 `MediaProjection` 录屏�
 | Kotlin 1.9.24 | 主语言 |
 | AGP 8.5.2 / Gradle 8.7 | 构建 |
 | compileSdk 34 / minSdk 24 | Android 7.0+ |
-| MediaProjection + VirtualDisplay | 录屏（Surface 输入，无 YUV 拷贝） |
-| MediaCodec | H.264 硬编 / 硬解（异步模式） |
+| WebRTC（`io.github.webrtc-sdk:android:144.7559.09`） | 采集、编码、传输、拥塞控制、DTLS-SRTP 一体 |
+| MediaProjection + ScreenCapturerAndroid | 录屏采集（进程内唯一实例） |
+| `SurfaceViewRenderer` | 接收端渲染远端视频轨 |
 | AccessibilityService | 反向控制（`dispatchGesture`） |
 | DatagramSocket 广播 | UDP 45555 发现（发送端 + 接收端双 beacon） |
 | GitHub Actions | push `v*` tag 自动构建 debug + release 并挂 Release |
 
-**模块划分**：`protocol/`（纯 Kotlin 协议库，零 Android 依赖）+ `app/`（单 App 双角色），无第三方业务依赖。
+**模块划分**：`protocol/`（纯 Kotlin 协议库，零 Android 依赖）+ `app/`（单 App 双角色，视频走 `rtc/` WebRTC 封装），除 WebRTC 外无第三方业务依赖。
 
 * * *
 
@@ -426,29 +459,32 @@ protocol/   共享协议与发现（纯 Kotlin 库，无 Android 依赖）
   Proto.kt       帧编解码（5 字节头 + body，小端序）
   Discovery.kt   双 beacon 广播 / 扫描（QPM1 发送端 + QPMR 接收端）
 app/        单 App 双角色
-  RoleActivity      角色选择入口 + 检查更新（GitHub Releases）
-  SenderActivity    录屏授权、配对码、画质/防息屏、连接管理、无障碍引导
-  CastService       录屏 + 编码 + TCP 服务 + 配对校验 + 白名单 + 控制分发
+  RoleActivity      角色选择入口 + 检查更新（GitHub Releases）+ 未读崩溃横幅
+  SenderActivity    录屏授权、配对码、防息屏、连接管理、无障碍引导
+  CastService       录屏采集 + TCP 辅助服务 + 配对校验 + 白名单 + 控制分发 + WebRTC 会话编排
   QpmControlService 无障碍服务，执行点击/滑动/输入
-  ReceiverActivity  SurfaceView + 配对输入 + 触摸映射 + 接收端宣告
+  ReceiverActivity  配对输入 + 触摸映射 + SurfaceViewRenderer 渲染远端视频轨
   FileBrowserActivity 文件浏览/下载/预览（接收端）
-  MirrorClient      发现 + 连接 + 配对 + 收发（约 150 行，第三方参考实现）
-  H264Encoder       MediaCodec 硬编（Surface 输入 + CSD 三重保险）
-  H264Decoder       MediaCodec 硬解（异步模式，直接渲染）
+  MirrorClient      发现 + 连接 + 配对 + 辅助通道收发 + WebRTC 会话（第三方参考实现）
+  rtc/ScreenCapture 进程内唯一屏幕采集（capturer + source + track）
+  rtc/RtcFactory    PeerConnectionFactory / EGL 单例，禁 mDNS 混淆
+  rtc/RtcSession    PeerConnection 封装：offer/answer、ICE、轨挂载、原生回调守卫
+  rtc/ControlChannel DataChannel 帧 → 控制分发（当前 offer 不带 DC，控制走 TCP）
   TouchMapper       视图坐标 → 手机屏幕坐标
+  CrashStore        崩溃记录落盘 / 判定白名单 / 导出 / 删除
   UpdateChecker     GitHub Releases 查询 + 版本比较 + APK 资产挑选
   AppUpdater        DownloadManager 下载 + FileProvider 安装 + 权限引导
   QpmApp            全局未捕获异常捕获（崩溃堆栈落盘 crashes/）
   QpmLog            日志双通道：logcat + files/logs/qpm-日期.log（同步写、3 天保留、8MB 封顶）
-  LogViewerActivity 诊断日志页（查看 / 分享 / 崩溃记录 / 清空）
+  LogViewerActivity 诊断日志页（查看 / 分享 / 崩溃记录 / 导出 / 删除）
 .github/workflows/build-apk.yml   push tag v* 自动打包 debug + release APK 并挂 Release
 ```
 
 ### 版本发布
 
 ```bash
-git tag v0.24        # 版本号唯一来源就是 git tag
-git push origin v0.24
+git tag v0.25        # 版本号唯一来源就是 git tag
+git push origin v0.25
 ```
 
 CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 GitHub Secrets 注入，不要写进 workflow 文件。**
@@ -459,16 +495,17 @@ CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 G
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| **连接上 / 配对成功立刻闪退** | **先确认两台设备装的是同一个新 APK**：新版发送端按长边 1280 降采样，旧版接收端会拿 `SCREEN_INFO` 里的真实屏幕尺寸去 configure 解码器，用错尺寸解降采样码流会在 native 层 SIGSEGV；反过来旧发送端 + 新接收端则因视频帧明密文规则不同，可能把密文当码流喂进硬解；本版又把 `VIDEO_FRAME` 头从 9 字节扩到 13 字节（新增 `sentAtMs`），并新增 `TOUCH_*` 控制帧，**混版时反向控制也会失效**。两端都重装同版即可。新版已加三道防线：尺寸帧走可靠通道保证先于首帧视频、收到尺寸后在收帧线程**同步**重建解码器（不再 post 到主线程留竞态窗口）、喂硬解前校验 Annex-B 起始码。若同版仍崩，到「诊断日志」页看崩溃记录（`QpmApp` 会抓 Java 堆栈与 `CRASH_NATIVE` 的 tombstone） |
+| **连接上 / 配对成功立刻闪退** | **先确认两台设备装的是同一个 APK，且同为 v0.25+**：v0.25 视频改走 WebRTC，与 ≤v0.24 的自研 H.264 裸流**完全不兼容**（混版表现为「配对成功但画面永远是黑的」）。老版本之间混版另有尺寸与帧头差异问题，同样两端同版即可。若同版仍崩，到「诊断日志」页看崩溃记录（`QpmApp` 会抓 Java 堆栈与 `CRASH_NATIVE` 的 tombstone），并把 `rtc/Session` 与 `rtc/native` 两段日志发出来 |
 | Quest 里找不到 App | 侧载应用不在桌面，「资料库 → 筛选 → 未知来源」里找 |
 | 接收端搜不到发送端 | 两端不在同一网段；路由器开了 AP 隔离；手机热点与接收端频段隔离 |
 | 连上但只能看不能控 | 手机端没开「QPM 控制服务」无障碍权限；或没输入配对码 |
 | 提示「发送端已拒绝本机连接」 | 手机端「连接管理」里取消了本机勾选；重新勾选即可恢复 |
 | 画面花屏 / 绿屏 | 等一秒让关键帧到达；仍不行重进接收端 |
 | 更新时提示「签名不一致」 | 旧版装的是 debug 签名包，卸载后装 Releases 里的 `app-release.apk` 即可（App 无持久数据，卸载无损失） |
-| 画面卡 / 延迟高 | 画质切「流畅」；换 5G Wi-Fi；确认两端离路由器不远 |
-| 横屏看视频 / 玩游戏时，接收端画面挤成中间一条 | 手机屏幕已经横过来、编码器却还在按竖屏尺寸出图，系统就把横屏画面缩进竖屏缓冲里（表现为上下大片黑边、视频只占中间 20% 高）。新版已同时监听显示配置变化与传感器角度，任一触发就按新尺寸重建编码器；旧版遇到时**在横屏状态下停止投屏再重新开始**即可（重连不会重建编码器） |
-| 解码错误提示 | 返回重进接收端；系统版本过旧的设备可能缺 H.264 硬解 |
+| 画面卡 / 延迟高 | 换 5G Wi-Fi；确认两端离路由器不远；WebRTC 会自动降码率，若持续卡顿看诊断日志里 `ICE` 是否反复 `DISCONNECTED` |
+| 配对成功但画面全黑 | 两端版本不一致（v0.25 起视频走 WebRTC，与旧版不兼容），先统一版本；同版仍黑则看 `rtc/Session` 里有没有「远端 answer 已设置」与 `ICE=CONNECTED` |
+| 横屏看视频 / 玩游戏时，接收端画面挤成中间一条 | 画面由 `VirtualDisplay` 等比承载，触摸坐标靠 `SCREEN_INFO` 修正；若比例异常，**停止投屏再重新开始**即可（v0.25 起旋转不再重建编码器，避免重复建虚拟显示把录屏授权搞挂） |
+| 解码 / 协商错误提示 | 返回重进接收端；连续失败时到诊断日志页导出日志 |
 | 开启无障碍后，微信 / QQ 投屏像蒙了一层毛玻璃（关掉无障碍就正常） | 系统的「屏幕共享防护」（小米/澎湃OS 在 **设置 → 电诈防护 → 屏幕共享防护**，部分机型在 **开发者选项 → 停用屏幕防护共享**）检测到「屏幕共享 + 具备控制能力的无障碍服务」，就会把微信、QQ、相册、支付宝等敏感应用**模糊遮罩**。这不是投屏编码问题，也不是本 App 能绕过的。三种处理：① 关闭该系统开关；② 投屏时点屏幕左上角/顶部的提示，选择「继续共享」（单次放行）；③ 只在需要反向控制时才开「QPM 控制服务」，看完敏感应用就关掉 |
 | Netflix 等黑屏 | DRM 硬件保护，无法镜像 |
 
@@ -488,4 +525,4 @@ CI 在 push `v*` tag 时自动构建并挂 Release。**release 签名密钥经 G
 
 ## 🙏 致谢
 
-- [Android MediaProjection](https://developer.android.com/reference/android/media/projection/MediaProjection) · [MediaCodec](https://developer.android.com/reference/android/media/MediaCodec) · [AccessibilityService](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
+- [Android MediaProjection](https://developer.android.com/reference/android/media/projection/MediaProjection) · [WebRTC](https://webrtc.org/)（[webrtc-sdk](https://github.com/webrtc-sdk/android)）· [AccessibilityService](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)

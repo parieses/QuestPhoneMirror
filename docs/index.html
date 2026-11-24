@@ -256,7 +256,7 @@
 <header>
   <div class="wrap hero">
     <div>
-      <span class="tag"><span class="dot"></span>v0.24 已发布 · 开源 · 免 root</span>
+      <span class="tag"><span class="dot"></span>v0.25 已发布 · 开源 · 免 root</span>
       <h1>把手机投到 <span class="grad">任意设备</span><br>还能反过来操作它</h1>
       <p class="sub">一个 APK 双角色：装在手机上是发送端，Quest 头显、另一台手机平板、或任何实现了本协议的电脑端作为接收端。画面实时镜像，接收端上的点击、滑动、输入会真实作用到手机上。免 PC、免公网、免账号，两端同一 Wi-Fi 即用。</p>
       <div class="cta">
@@ -270,7 +270,7 @@
         </a>
       </div>
       <div class="meta">
-        <span>协议 <b>MediaProjection + H.264</b></span>
+        <span>协议 <b>MediaProjection + WebRTC</b></span>
         <span>接收端 <b>Quest / 手机 / 平板 / 电脑</b></span>
         <span>许可 <b>MIT</b></span>
       </div>
@@ -302,7 +302,7 @@
             <div class="art-label"><b>接收端</b>Quest / 手机 / 电脑</div>
           </div>
         </div>
-        <div class="art-foot">H.264 硬编推流 · UDP 自动发现 · 手势回传控制</div>
+        <div class="art-foot">WebRTC 点对点 · UDP 自动发现 · 手势回传控制</div>
       </div>
     </div>
   </div>
@@ -318,8 +318,8 @@
     <div class="grid">
       <div class="feat">
         <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="3" width="10" height="13" rx="2"/><path d="M12 19.5v.01"/><path d="M9.5 6.5a2.6 2.6 0 0 1 5 0"/><path d="M7 4a4.8 4.8 0 0 1 10 0" opacity=".55"/></svg></div>
-        <h3>实时镜像 · 画质三档</h3>
-        <p>1080p30 H.264 硬编硬解，流畅 4M / 均衡 6M / 高清 10M 三档码率，弱网切流畅即用。</p>
+        <h3>实时镜像 · WebRTC 直连</h3>
+        <p>WebRTC 点对点推流，长边 ≤1920、30fps，码率由拥塞控制实时自适应；纯局域网零 STUN、零服务端。</p>
       </div>
       <div class="feat">
         <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="2.2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.5 5.5a9.3 9.3 0 0 0 0 13M18.5 5.5a9.3 9.3 0 0 1 0 13"/></svg></div>
@@ -359,7 +359,7 @@
       <div class="feat">
         <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 10v4M12 8v6M17 11v3"/></svg></div>
         <h3>投屏统计浮窗</h3>
-        <p>接收端一键开浮窗，实时显示分辨率 / 帧率 / 码率 / 丢帧 / 解码帧率，卡顿时先降画质。</p>
+        <p>接收端一键开浮窗，实时显示分辨率 / 帧率 / 码率 / 丢帧，链路状态一眼看清。</p>
       </div>
       <div class="feat">
         <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg></div>
@@ -401,14 +401,14 @@
         <rect x="45" y="90" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
         <text x="120" y="116" text-anchor="middle" fill="#A5B4FC" font-size="13">MediaProjection 录屏</text>
         <rect x="45" y="142" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
-        <text x="120" y="168" text-anchor="middle" fill="#A5B4FC" font-size="13">H.264 硬编 1080p30</text>
+        <text x="120" y="168" text-anchor="middle" fill="#A5B4FC" font-size="13">WebRTC 采集 1920</text>
         <rect x="45" y="194" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
-        <text x="120" y="220" text-anchor="middle" fill="#A5B4FC" font-size="13">TCP 服务 · 端口 45556</text>
+        <text x="120" y="220" text-anchor="middle" fill="#A5B4FC" font-size="13">TCP 45556 信令 + 控制</text>
 
         <!-- 中间链路 -->
         <line x1="225" y1="130" x2="355" y2="130" stroke="url(#lg1)" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="290" y="118" text-anchor="middle" fill="#22D3EE" font-size="12.5">H.264 裸流</text>
-        <text x="290" y="152" text-anchor="middle" fill="#64748B" font-size="11.5">[type|len|body] 帧</text>
+        <text x="290" y="118" text-anchor="middle" fill="#22D3EE" font-size="12.5">DTLS-SRTP 媒体</text>
+        <text x="290" y="152" text-anchor="middle" fill="#64748B" font-size="11.5">SDP / ICE / 控制帧</text>
         <line x1="355" y1="205" x2="225" y2="205" stroke="#C084FC" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#arr)"/>
         <text x="290" y="228" text-anchor="middle" fill="#C084FC" font-size="12.5">点击 / 滑动 / 输入</text>
 
@@ -418,7 +418,7 @@
         <rect x="385" y="90" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
         <text x="460" y="116" text-anchor="middle" fill="#A5B4FC" font-size="13">UDP 45555 自动发现</text>
         <rect x="385" y="142" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
-        <text x="460" y="168" text-anchor="middle" fill="#A5B4FC" font-size="13">MediaCodec 硬解</text>
+        <text x="460" y="168" text-anchor="middle" fill="#A5B4FC" font-size="13">WebRTC 解码</text>
         <rect x="385" y="194" width="150" height="42" rx="10" fill="#14112E" stroke="#37346B"/>
         <text x="460" y="220" text-anchor="middle" fill="#A5B4FC" font-size="13">SurfaceView 渲染</text>
 
@@ -521,7 +521,7 @@
     </details>
     <details>
       <summary>延迟大概多少？能玩游戏用吗？</summary>
-      <p>局域网内硬编硬解端到端约 40–90ms，看通知、回消息、演示操作都够用；不适用于对帧率敏感的竞技场景。</p>
+      <p>局域网内点对点直连，延迟通常在数十毫秒级，看通知、回消息、演示操作都够用；不适用于对帧率敏感的竞技场景。</p>
     </details>
     <details>
       <summary>接收端能看发送机的文件吗？</summary>
@@ -559,7 +559,7 @@
       <div class="cta" style="justify-content: center;">
         <a class="btn btn-primary" href="https://github.com/parieses/QuestPhoneMirror/releases/latest" target="_blank" rel="noopener">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 20h16"/></svg>
-          下载 v0.24
+          下载 v0.25
         </a>
         <a class="btn btn-ghost" href="https://github.com/parieses/QuestPhoneMirror#接入自定义接收端" target="_blank" rel="noopener">协议对接文档</a>
       </div>
